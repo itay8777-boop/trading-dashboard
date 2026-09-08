@@ -1,0 +1,42 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+build/
+dist/
+
+# --- Virtual environment ---
+.venv/
+venv/
+env/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Editors / tooling ---
+.vscode/
+.idea/
+*.swp
+
+# --- Logs / scratch ---
+*.log
+nohup.out
+
+# --- Local data caches (regenerated from IB/Databento, not source) ---
+data_cache/
+databento_data/
+
+# --- Vendored static assets (fetched, not authored; app falls back to CDN embed if missing) ---
+static/plotly.min.js
+
+# --- Runtime/user state (regenerated at runtime, not source) ---
+strategies.json
+
+# --- Secrets (none should ever exist in this repo, but guard anyway) ---
+.env
+.env.*
+*.pem
+*.key
+.streamlit/secrets.toml

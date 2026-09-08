@@ -1,0 +1,8 @@
+# מאפשר להגיש קבצים סטטיים מתיקיית static/ בכתובת /app/static/<file>.
+# נחוץ כדי ש-plotly.min.js ייטען פעם אחת ויישמר ב-cache של הדפדפן, במקום להישלח
+# מחדש (4.3MB) בתוך ה-HTML של הגרף בכל שינוי זום/טווח/סימבול.
+[server]
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false

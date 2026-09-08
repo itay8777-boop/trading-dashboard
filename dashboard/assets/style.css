@@ -1,0 +1,607 @@
+/* ערכת TradingView Dark. שמות ה---tv-* הם כינויים לאותם צבעים, כי כללי הטבלאות
+   שמחולצים מ-ui_components.py משתמשים בהם — בלעדיהם הרקעים והמסגרות היו נעלמים. */
+:root {
+    /* --bg שחור מלא בכוונה (בקשה מפורשת) - זה הרקע "מאחורה": topbar/פאנל
+       תחתון/body, מחוץ לשטח הנרות עצמו. שטח הנרות בהיר יותר מזה בכוונה (BG
+       ב-chart.py), כדי שיהיה ניגוד בין הגרף לכרום סביבו, לא צבע אחיד שטוח. */
+    --bg: #000000; --panel: #16191F; --panel-2: #0C0E12; --border: #2A2E37;
+    --text: #E8EAF0; --muted: #9296A3; --blue: #2962FF;
+    --up: #089981; --down: #F23645;
+    --font: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+
+    --tv-bg: #000000; --tv-panel: #16191F; --tv-panel-alt: #0C0E12;
+    --tv-border: #2A2E37; --tv-text: #E8EAF0; --tv-text-2: #C4C7D0;
+    --tv-muted: #9296A3; --tv-blue: #2962FF; --tv-up: #089981; --tv-down: #F23645;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; }
+
+/* ---------- סרגל עליון ---------- */
+.topbar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.symbol-input {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 7px 10px; width: 130px;
+    font-size: 15px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+.symbol-input:focus { outline: none; border-color: var(--blue); }
+.tf-group { display: flex; gap: 2px; margin-left: 4px; }
+.tf-btn {
+    background: transparent; border: 1px solid transparent; color: var(--muted);
+    border-radius: 4px; padding: 6px 11px; font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: var(--font);
+}
+.tf-btn:hover { background: var(--border); color: var(--text); }
+.tf-btn.active { background: var(--border); color: var(--blue); }
+.sep { width: 1px; height: 22px; background: var(--border); margin: 0 6px; }
+.status { margin-left: auto; color: var(--muted); font-size: 12px; }
+.status.error { color: var(--down); }
+.dash-spinner { color: var(--blue) !important; }
+
+/* ---------- תפריט "Indicators" (סרגל עליון) - ראו assets/indicators.js ---------- */
+.indicators-wrap { position: relative; }
+.indicators-btn {
+    display: flex; align-items: center; gap: 6px;
+    background: transparent; border: 1px solid transparent; color: var(--muted);
+    border-radius: 4px; padding: 6px 10px; font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: var(--font);
+}
+.indicators-btn:hover { background: var(--border); color: var(--text); }
+.indicators-btn-icon { width: 15px; height: 15px; display: block; }
+.indicators-btn-label { white-space: nowrap; }
+.indicators-btn-caret { font-size: 9px; color: var(--muted); }
+
+.indicators-menu {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 320px;
+    background: #1E222D; border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5); font-family: var(--font); padding: 6px 0;
+}
+.indicator-row { display: flex; align-items: center; gap: 10px; padding: 8px 14px; }
+.indicator-row:hover { background: var(--border); }
+.indicator-row-name { flex: 1 1 auto; font-size: 12.5px; color: var(--text); font-weight: 500; }
+.indicator-row-params { display: flex; gap: 6px; }
+.indicator-param { display: flex; align-items: center; gap: 4px; }
+.indicator-param-label { font-size: 10.5px; color: var(--muted); }
+.indicator-param-input {
+    width: 46px; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 4px 5px; font-size: 11.5px; font-family: var(--font);
+}
+.indicator-param-input:focus { outline: none; border-color: var(--blue); }
+.indicator-param-input::-webkit-outer-spin-button,
+.indicator-param-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.indicator-param-input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.indicator-add-btn {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 5px 12px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+    font-family: var(--font); white-space: nowrap;
+}
+.indicator-add-btn:hover { filter: brightness(1.25); }
+.indicator-remove-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--down);
+    border-radius: 4px; width: 26px; height: 26px; cursor: pointer; padding: 0;
+    font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+.indicator-remove-btn:hover { background: var(--border); }
+
+/* ---------- תווית "RSI 14 close" בפינה השמאלית-עליונה של פאנל ה-RSI ----------
+   ראו assets/indicators.js: DEFS.rsi - הרקע והמילויים עצמם מצוירים דרך primitive
+   על ה-canvas (מסונכרן תמיד עם ה-scale), רק הטקסט הזה הוא DOM אמיתי (צבעים
+   מעורבים בתוך שורה אחת נוחים יותר ב-HTML מאשר בציור טקסט על canvas). */
+.rsi-panel-label {
+    position: absolute; left: 8px; z-index: 4; pointer-events: none;
+    font-size: 11px; font-family: var(--font); white-space: nowrap;
+    text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 4px rgba(0,0,0,0.9);
+}
+.rsi-label-title { color: var(--muted); margin-right: 6px; }
+.rsi-label-main { color: #7B68EE; font-weight: 600; margin-right: 6px; }
+.rsi-label-signal { color: #FFC107; font-weight: 600; }
+
+.num-input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 6px 8px; font-size: 12px; font-family: var(--font);
+}
+.num-input:focus { outline: none; border-color: var(--blue); }
+.num-input::-webkit-outer-spin-button,
+.num-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.num-input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+
+/* ================= פריסה: גרף במלוא הרוחב + פאנל נפתח מתחתיו ================= */
+.workspace { display: flex; flex-direction: column; height: calc(100vh - 47px); }
+.chart-pane { flex: 1 1 auto; position: relative; min-height: 160px; }
+#chart-container { position: absolute; inset: 0; }
+
+/* ספירה לאחור עד סגירת הנר הנוכחי, צמודה לתווית המחיר האחרון על ציר ה-Y — כמו
+   ב-TradingView. הפוזיציה (top) מחושבת ומעודכנת ב-JS לפי priceToCoordinate. */
+#bar-countdown {
+    position: absolute;
+    right: 6px;
+    transform: translateY(18px);
+    background: #131722;
+    border: 1px solid #2A2E39;
+    border-radius: 3px;
+    color: #D1D4DC;
+    font-size: 11px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    padding: 1px 6px;
+    pointer-events: none;
+    z-index: 5;
+    display: none;
+}
+
+.bottom-panel {
+    flex: 0 0 auto; height: 46vh; display: flex; flex-direction: column;
+    background: var(--panel); border-top: 1px solid var(--border);
+}
+/* במצב מכווץ נשארת רק רצועת הלשוניות, והגרף מתרחב לכל הגובה. */
+.workspace.collapsed .bottom-panel { height: 39px; }
+.workspace.collapsed .panel-body { display: none; }
+
+.panel-bar {
+    display: flex; align-items: stretch; height: 38px; flex: 0 0 auto;
+    background: var(--panel-2); border-bottom: 1px solid var(--border);
+    position: relative;
+}
+.panel-toggle {
+    margin-left: auto; background: transparent; border: none; color: var(--muted);
+    font-size: 15px; cursor: pointer; padding: 0 14px;
+}
+.panel-toggle:hover { color: var(--text); background: var(--border); }
+.panel-body { flex: 1 1 auto; overflow-y: auto; padding: 12px 14px 16px; }
+
+/* לשוניות הפאנל (Strategy Tester / Pine Editor) */
+.panel-tabs-parent, .panel-tabs { display: flex; border: none !important; }
+.ptab {
+    background: transparent !important; border: none !important;
+    border-right: 1px solid var(--border) !important;
+    color: var(--muted) !important; font-size: 13px !important; font-weight: 500 !important;
+    padding: 0 16px !important; display: flex !important; align-items: center !important;
+}
+.ptab:hover { color: var(--text) !important; }
+.ptab-sel {
+    background: var(--bg) !important; color: var(--text) !important;
+    border-top: 2px solid var(--blue) !important;
+}
+
+/* לשוניות התוצאות (Overview / Summary / Trades) */
+.result-tabs { border-bottom: 1px solid var(--border) !important; margin-bottom: 12px; }
+.rtab {
+    background: transparent !important; border: none !important;
+    color: var(--muted) !important; font-size: 12.5px !important; font-weight: 500 !important;
+    padding: 8px 0 !important; margin-right: 22px !important;
+}
+.rtab:hover { color: var(--text) !important; }
+.rtab-sel {
+    color: var(--text) !important; background: transparent !important;
+    border-bottom: 2px solid var(--blue) !important;
+}
+.result-body { padding-top: 2px; }
+
+/* ---------- Pine Editor ---------- */
+.editor-row {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.editor-hint { color: var(--muted); font-size: 11.5px; flex: 1 1 260px; }
+.editor-controls { display: flex; align-items: center; gap: 6px; }
+.ctl-label { color: var(--muted); font-size: 11px; }
+.num-input.tiny { width: 78px; padding: 5px 7px; }
+.code-area {
+    width: 100%; min-height: 210px; background: #0D1117; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 12.5px;
+    line-height: 1.55; direction: ltr; text-align: left; resize: vertical;
+}
+.code-area:focus { outline: none; border-color: var(--blue); }
+.run-btn {
+    background: var(--blue); color: #fff; border: none; border-radius: 4px;
+    padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    font-family: var(--font); white-space: nowrap;
+}
+.run-btn:hover { filter: brightness(1.12); }
+.run-btn:disabled { opacity: 0.55; cursor: default; filter: none; }
+.run-error { color: var(--down); font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
+
+/* ---------- ספריית אסטרטגיות (Pine Editor), ליד הלשונית - כמו TradingView ----------
+   הצבע (top/left) נקבע ב-JS לפי מיקום לשונית "Pine Editor" בפועל (ראו
+   assets/strategy_library.js: positionArrow) - התלויות הפריסה כאן משרתות רק
+   את המראה (גודל/צבע/hover), לא את המיקום. */
+.strategy-lib-arrow {
+    position: absolute; z-index: 6; width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 11px; cursor: pointer; border-radius: 3px;
+    user-select: none;
+}
+.strategy-lib-arrow:hover { color: var(--text); background: var(--border); }
+
+.strategy-lib-menu {
+    position: absolute; z-index: 30; min-width: 220px; max-width: 320px;
+    max-height: 320px; overflow-y: auto;
+    background: #1E222D; border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5); font-family: var(--font); padding: 6px 0;
+}
+.strategy-lib-item {
+    display: block; padding: 7px 14px; font-size: 12.5px; color: var(--text);
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.strategy-lib-item:hover { background: var(--border); }
+.strategy-lib-item.strategy-lib-active { color: var(--blue); }
+.strategy-lib-empty { padding: 8px 14px; font-size: 12px; color: var(--muted); }
+.strategy-lib-divider { height: 1px; background: var(--border); margin: 6px 0; }
+.strategy-lib-action { padding: 7px 14px; font-size: 12.5px; color: var(--text); cursor: pointer; }
+.strategy-lib-action:hover { background: var(--border); }
+.strategy-lib-action.disabled { color: var(--muted); cursor: default; }
+.strategy-lib-action.disabled:hover { background: transparent; }
+
+.strategy-lib-toast {
+    position: absolute; z-index: 40;
+    background: #1E222D; border: 1px solid var(--border); color: var(--text);
+    font-size: 12px; padding: 6px 12px; border-radius: 4px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4); pointer-events: none;
+    opacity: 0; transition: opacity .2s ease;
+}
+.strategy-lib-toast.show { opacity: 1; }
+
+/* מודל "שם אסטרטגיה" (Save current/Save as new) - זהה במבנה ל-goto-modal-overlay. */
+.strategy-save-modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.55); align-items: center; justify-content: center;
+}
+.strategy-save-modal-overlay.open { display: flex; }
+.strategy-save-modal {
+    width: 320px; background: #1E222D; border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    font-family: var(--font); color: var(--text); padding: 18px 20px 16px;
+}
+.strategy-save-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.strategy-save-modal-title { font-size: 16px; font-weight: 600; }
+.strategy-save-modal-close {
+    background: transparent; border: none; color: var(--muted);
+    font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1;
+}
+.strategy-save-modal-close:hover { color: var(--text); }
+.strategy-save-name-input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 9px 10px; font-size: 14px; font-family: var(--font);
+}
+.strategy-save-name-input:focus { outline: none; border-color: var(--blue); }
+.strategy-save-modal-footer {
+    display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px;
+    padding-top: 14px; border-top: 1px solid var(--border);
+}
+
+/* ---------- Settings (חשבון וביצוע) ---------- */
+.settings-hint { color: var(--muted); font-size: 11.5px; margin-bottom: 14px; }
+.settings-grid {
+    display: flex; flex-wrap: wrap; gap: 18px 28px;
+}
+.settings-field { display: flex; flex-direction: column; gap: 5px; }
+.settings-field .num-input.tiny { width: 110px; }
+.settings-dropdown { width: 110px; }
+.settings-dropdown .Select-control, .settings-dropdown .dash-dropdown > div {
+    background: var(--bg) !important; border: 1px solid var(--border) !important;
+    color: var(--text) !important; font-size: 12px !important; min-height: 30px !important;
+}
+.settings-dropdown .dash-dropdown > div { border-radius: 4px !important; }
+.settings-dropdown div[class$="-singleValue"] { color: var(--text) !important; }
+.settings-dropdown div[class$="-menu"] {
+    background: var(--panel-2) !important; border: 1px solid var(--border) !important;
+    z-index: 20 !important;
+}
+.settings-dropdown div[class*="-option"] { background: var(--panel-2) !important; color: var(--text) !important; }
+.settings-dropdown div[class*="-option"]:hover,
+.settings-dropdown div[class*="option--is-focused"] { background: var(--border) !important; }
+.settings-dropdown svg { fill: var(--muted) !important; }
+
+/* ---------- Strategy Inputs (זוהו מ-"# input" בקוד - ראו app.py) ---------- */
+.settings-section-title {
+    color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; margin: 20px 0 10px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+.strategy-input-checkbox { display: flex; align-items: center; height: 30px; }
+.strategy-input-checkbox input[type="checkbox"] {
+    width: 16px; height: 16px; accent-color: var(--blue); cursor: pointer; margin: 0;
+}
+.strategy-input-checkbox label { display: flex; align-items: center; }
+
+/* ---------- פילטר תקופה מעל גרף ה-Performance (PERIOD_LABELS ב-app.py) ---------- */
+.perf-period-bar {
+    align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
+}
+/* dcc.Dropdown ברינדור הזה הוא כפתור+פופאפ native (dash-dropdown-*), לא
+   react-select כמו בגרסאות ישנות יותר - אין כאן .Select-control/-menu/-option
+   ("class$=/*=" למעלה היו נגד מבנה ישן ולא תפסו כלום, ומשאירות את הכפתור
+   בעיצוב ברירת המחדל הבהיר של Dash: רקע לבן ומסגרת כחולה-כהה, בדיוק מה שנראה
+   "לא במקום" על רקע כהה). מסגנים ישירות את .perf-period-dropdown (הכפתור עצמו
+   - יש לו גם id וגם class, בלי div-עטיפה) כדי לקבל פיל קטן וכהה כמו ב-
+   TradingView: לא תפוס-רוחב (width: auto לפי התוכן), רקע/מסגרת עדינים, טקסט
+   אפור בהיר קטן, וחץ chevron מומר לצבע מושתק באותו אופן.
+   */
+.perf-period-dropdown {
+    width: auto !important; flex: 0 0 auto; height: 26px !important; min-height: 0 !important;
+    background: #1E222D !important; border: 1px solid var(--border) !important;
+    border-radius: 4px !important; padding: 0 8px !important;
+}
+.perf-period-dropdown:hover { border-color: #3A3F4B !important; }
+/* Dash שם outline סגול-בהיר (rgb(127,75,196)) בפוקוס כברירת מחדל, ונשאר גם אחרי
+   בחירה (הכפתור נשאר ממוקד) - זה בדיוק ה"בהיר סגול/כחול" שלא מתאים לעיצוב כאן. */
+.perf-period-dropdown:focus, .perf-period-dropdown:focus-visible {
+    outline: 1px solid var(--border) !important; outline-offset: 0 !important;
+}
+.perf-period-dropdown .dash-dropdown-grid-container {
+    display: flex !important; align-items: center !important; gap: 6px !important; padding: 0 !important;
+}
+.perf-period-dropdown .dash-dropdown-value,
+.perf-period-dropdown .dash-dropdown-value-item,
+.perf-period-dropdown .dash-dropdown-value-item span {
+    color: var(--muted) !important; font-size: 12px !important; white-space: nowrap !important;
+}
+.perf-period-dropdown .dash-dropdown-trigger-icon {
+    color: var(--muted) !important; width: 11px !important; height: 11px !important; flex: 0 0 auto;
+}
+.perf-period-dropdown .dash-dropdown-content {
+    background: #1E222D !important; border: 1px solid var(--border) !important;
+    border-radius: 6px !important; box-shadow: 0 8px 24px rgba(0,0,0,.5) !important;
+}
+.perf-period-dropdown .dash-dropdown-option {
+    background: transparent !important; color: var(--text) !important;
+    font-size: 12.5px !important; padding: 7px 12px !important; box-shadow: none !important;
+}
+.perf-period-dropdown .dash-dropdown-option:hover,
+.perf-period-dropdown .dash-dropdown-option.selected {
+    background: var(--border) !important;
+}
+/* רדיו-באטון native (נגישות בלבד, הבחירה כבר ברורה מהדגשת הרקע למעלה) - בטריידינג-וויו
+   השורות פשוטות בלי בועת-בחירה, ומופיע פה כברירת מחדל בהירה/גדולה שלא מתאימה לעיצוב. */
+.perf-period-dropdown .dash-options-list-option-checkbox { display: none !important; }
+.perf-custom-range { align-items: center; gap: 8px; }
+.perf-custom-date {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 6px 8px; font-size: 12.5px; font-family: var(--font);
+}
+.perf-custom-date:focus { outline: none; border-color: var(--blue); }
+.perf-custom-arrow { color: var(--muted); font-size: 12.5px; }
+/* שורת ההקשר מתחת לכותרת "Key stats" כשהפילטר פעיל - "Last 30 Days · 428 of
+   156,113 trades" (ראו panels.key_stats_for_period) - כדי שהמשתמש לא יטעה
+   לחשוב שהמספרים למעלה משקפים את כל ההיסטוריה. */
+.tv-ks-period { color: var(--tv-muted); font-size: 12px; margin: -9px 0 14px; }
+
+/* ---------- ניווט עמודים ל"List of Trades" (TRADES_PAGE_SIZE ב-app.py) ---------- */
+.trades-pagination {
+    align-items: center; justify-content: center; gap: 14px;
+    padding: 10px 0; font-size: 12.5px; color: var(--text);
+}
+.trades-page-btn {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text); padding: 5px 12px; font-size: 12.5px; cursor: pointer;
+}
+.trades-page-btn:hover { filter: brightness(1.25); }
+.trades-page-info { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ה-HTML של הטבלאות מוזרק דרך dcc.Markdown — מנטרלים את מרווחי ברירת המחדל שלו */
+.panel-body .dash-markdown, .panel-body p { margin: 0; }
+
+/* תוויות הלשוניות נשברו לשתי שורות ברוחב הצר של הטאב */
+.ptab, .rtab { white-space: nowrap !important; }
+.panel-tabs .ptab { min-width: 130px; justify-content: center; }
+.result-tabs .rtab { min-width: 0; }
+/* Dash מותח את מיכל הלשוניות לכל הרוחב; מצמצמים אותו לרוחב התוכן */
+.result-tabs { display: flex !important; }
+
+/* שדות מספר צרים (Settings) היו צרים מדי והמספרים נחתכו ("100000" הוצג כ-"10") */
+.num-input.tiny { width: 92px; }
+
+
+
+/* ---------- טבלאות ופאנלים בסגנון TradingView ----------
+   מחולצים מ-ui_components.py (מקור האמת לעיצוב), כדי שפאנל הביצועים כאן
+   ייראה זהה לזה שבאפליקציה הקיימת. סלקטורים ייחודיים ל-Streamlit הושמטו. */
+/* ---------- Strategy Tester panel (שחזור של הפאנל האמיתי ב-TradingView) ---------- */
+.tv-st-panel {
+    background: var(--tv-bg); border: 1px solid var(--tv-border);
+    border-radius: 6px; margin-top: 4px; overflow: hidden;
+}
+/* הפאנל מפוצל לשני חלקים כדי שבורר "תקופת הבדיקה" (ווידג'ט Streamlit אמיתי) ישב
+   בתוכו. הקצוות מיושרים כך שזה נראה כמו מסגרת אחת רציפה. */
+.tv-st-panel-top { border-radius: 6px 6px 0 0; border-bottom: none; margin-bottom: 0;
+}
+.tv-st-panel-bottom { border-radius: 0 0 6px 6px; border-top: none; margin-top: 0;
+}
+/* Key stats — ערך ואחוז על אותה שורה, "USD" כסיומת קטנה, בלי מפרידים אנכיים */
+.tv-ks-wrap { padding: 15px 16px 18px;
+}
+.tv-ks-title { font-size: 19px; font-weight: 600; color: var(--tv-text); margin-bottom: 15px;
+}
+.tv-ks-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px 24px;
+}
+.tv-ks-label { color: var(--tv-muted); font-size: 13px; margin-bottom: 8px; white-space: nowrap;
+}
+.tv-ks-value {
+    display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+    font-size: 17px; font-weight: 500; letter-spacing: -.01em; line-height: 1.2;
+}
+.tv-ks-unit { font-size: 11px; color: var(--tv-muted); font-weight: 400;
+}
+.tv-ks-frac { color: var(--tv-text);
+}
+/* כותרת ומקרא של אזור ה-Performance */
+.tv-perf-head { display: flex; align-items: center; gap: 7px; margin: 2px 0 10px;
+}
+.tv-perf-title { font-size: 15px; font-weight: 600; color: var(--tv-text);
+}
+.tv-perf-help {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid var(--tv-muted); color: var(--tv-muted);
+    font-size: 10px; font-weight: 600;
+}
+.tv-pos { color: var(--tv-up) !important;
+}
+.tv-neg { color: var(--tv-down) !important;
+}
+.tv-neutral { color: var(--tv-text) !important;
+}
+/* ---------- performance summary table ---------- */
+.tv-table-wrap { overflow-x: auto; border: 1px solid var(--tv-border); border-radius: 6px;
+}
+table.tv-table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+    background: var(--tv-panel); font-variant-numeric: tabular-nums;
+}
+table.tv-table th {
+    text-align: right; color: var(--tv-muted); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em;
+    padding: 10px 14px; border-bottom: 1px solid var(--tv-border);
+    position: sticky; top: 0; background: var(--tv-panel-alt); white-space: nowrap;
+}
+table.tv-table th:first-child { text-align: left;
+}
+table.tv-table td {
+    padding: 8px 14px; border-bottom: 1px solid rgba(42,46,57,.55);
+    white-space: nowrap; text-align: right; color: var(--tv-text);
+}
+table.tv-table td:first-child { text-align: left; color: var(--tv-text-2);
+}
+table.tv-table tr:hover td { background: rgba(255,255,255,.028);
+}
+table.tv-table tr:last-child td { border-bottom: none;
+}
+.tv-row-group td:first-child { color: var(--tv-text); font-weight: 600;
+}
+/* ---------- list of trades ---------- */
+table.tv-trades tr.tv-entry-row td { color: var(--tv-muted); border-bottom: 1px solid var(--tv-border);
+}
+.tv-long { color: var(--tv-up); font-weight: 600;
+}
+.tv-short { color: var(--tv-down); font-weight: 600;
+}
+.tv-num { color: var(--tv-muted); font-weight: 600;
+}
+.tv-sig { color: var(--tv-muted); font-size: 12px;
+}
+.tv-empty {
+    padding: 26px 16px; text-align: center; color: var(--tv-muted); font-size: 13px;
+    background: var(--tv-panel); border: 1px solid var(--tv-border); border-radius: 6px;
+}
+
+/* @media מוחזר לתנאי המקורי שלו — בהעתקה קודמת הוא נשלף החוצה ודרס את פריסת
+   4 העמודות בכל רוחב מסך. */
+@media (max-width: 900px) {
+    .tv-ks-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ---------- מפריד לגרירת גובה הפאנל התחתון ---------- */
+.panel-resizer {
+    height: 6px; flex: 0 0 auto; cursor: row-resize;
+    background: transparent; border-top: 1px solid transparent;
+    margin-top: -1px;
+}
+.panel-resizer:hover, .panel-resizer:active { background: var(--blue); opacity: .55; }
+.bottom-panel { position: relative; }
+/* הכפתור היה חץ זעיר בקצה; מגדילים אותו כדי שיהיה ברור שאפשר למזער */
+.panel-toggle { font-size: 17px; line-height: 1; min-width: 44px; }
+
+/* ---------- טיימר סגירת הנר, על סרגל המחירים ----------
+   יושב מתחת לתווית המחיר האחרון, כמו ב-TradingView. pointer-events מנוטרל כדי
+   שלא יחסום גרירה/זום של הגרף מתחתיו. */
+.bar-countdown {
+    position: absolute; right: 0; z-index: 3; pointer-events: none;
+    text-align: center; padding: 2px 0;
+    background: var(--border); color: var(--text);
+    font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+    letter-spacing: .02em; border-radius: 2px;
+}
+
+/* ---------- סרגל תחתון מתחת לציר הזמן של הגרף (כמו TradingView) ----------
+   שורה קבועה בזרימה רגילה (לא absolute מעל הגרף) - workspace הוא flex column,
+   אז הוספת האח הזה בין chart-pane ל-bottom-panel פשוט מכווצת את chart-pane
+   בגובה שלה, בלי לחפוף לגרף עצמו. */
+.chart-bottom-toolbar {
+    display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
+    height: 30px; padding: 0 8px;
+    background: var(--panel-2); border-top: 1px solid var(--border);
+}
+
+/* ---------- כפתור "Go to date" + המודל, בסגנון TradingView ---------- */
+.goto-btn {
+    width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 4px;
+    cursor: pointer; padding: 0;
+}
+.goto-btn:hover { background: var(--border); }
+.goto-btn-icon { width: 15px; height: 15px; display: block; }
+
+/* ---------- כפתור "חזרה לעכשיו" (go to real time), ליד כפתור ה-Go to ---------- */
+.reset-live-btn {
+    width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 4px;
+    cursor: pointer; padding: 0; color: var(--text); font-size: 13px; line-height: 1;
+}
+.reset-live-btn:hover { background: var(--border); }
+
+/* ---------- שעון בזמן אמת (שעון ישראל, ראו assets/clock.js) ---------- */
+.market-clock {
+    margin-left: auto; color: var(--muted); font-size: 12px;
+    font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 4px;
+}
+
+/* ---------- הודעת "יותר מדי עסקאות" - ראו MARKER_TRADE_LIMIT ב-app.py ---------- */
+.marker-note {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 4;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 12px; color: var(--text); font-size: 12px; white-space: nowrap;
+}
+
+.goto-modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.55);
+    align-items: center; justify-content: center;
+}
+.goto-modal-overlay.open { display: flex; }
+
+.goto-modal {
+    width: 360px; background: #1E222D; border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    font-family: var(--font); color: var(--text);
+    padding: 18px 20px 16px;
+}
+.goto-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.goto-modal-title { font-size: 20px; font-weight: 600; }
+.goto-modal-close {
+    background: transparent; border: none; color: var(--muted);
+    font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1;
+}
+.goto-modal-close:hover { color: var(--text); }
+
+.goto-tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.goto-tab {
+    background: transparent; border: none; color: var(--muted);
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    padding: 0 0 10px; border-bottom: 2px solid transparent;
+}
+.goto-tab-active { color: var(--text); border-bottom-color: var(--text); }
+
+.goto-pane { margin-bottom: 6px; }
+.goto-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.goto-date-input, .goto-time-input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 9px 10px; font-size: 14px; font-family: var(--font);
+}
+.goto-date-input { flex: 1 1 auto; }
+.goto-time-input { flex: 0 0 90px; }
+.goto-date-input:focus, .goto-time-input:focus { outline: none; border-color: var(--blue); }
+
+.goto-modal-footer {
+    display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px;
+    padding-top: 14px; border-top: 1px solid var(--border);
+}
+.goto-cancel-btn, .goto-submit-btn {
+    padding: 8px 16px; border-radius: 4px; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: var(--font);
+}
+.goto-cancel-btn { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.goto-cancel-btn:hover { background: var(--border); }
+.goto-submit-btn { background: var(--text); border: none; color: #131722; }
+.goto-submit-btn:hover { filter: brightness(0.92); }
