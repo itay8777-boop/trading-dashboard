@@ -36,12 +36,14 @@ from .data import (
 from .strategy import (
     DEFAULT_CODE,
     HAMMER_RSI_CODE,
+    FIB_GOLDEN_CODE,
     RECOGNIZED_STRATEGY_INPUTS,
     StrategyCompileError,
     detect_builtin_strategy,
     parse_strategy_inputs,
     run_fast_sma_crossover_backtest,
     run_hammer_rsi_backtest,
+    run_fib_golden_backtest,
     to_markers,
 )
 
@@ -114,6 +116,7 @@ _STRATEGIES_LOCK = threading.Lock()
 # שמירה בשם הזה על ידי המשתמש פשוט "תדרוס חזותית" (לא לצמיתות) את המובנית.
 BUILTIN_STRATEGIES = [
     {"name": "Hammer + RSI (built-in)", "code": HAMMER_RSI_CODE, "settings": {}},
+    {"name": "Fibonacci + Golden Ratio (built-in)", "code": FIB_GOLDEN_CODE, "settings": {}},
 ]
 _BUILTIN_STRATEGY_NAMES = {s["name"] for s in BUILTIN_STRATEGIES}
 
@@ -968,6 +971,24 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
                     hammer_ratio=_override("hammer_ratio", 2.0),
                     stop_loss_pts=_override("stop_loss_pts", 50.0),
                     take_profit_pts=_override("take_profit_pts", 100.0),
+                )
+            elif builtin_key == "fib_golden":
+                _b = lambda v: (str(v).strip().lower() in ("1", "true", "on", "yes")) if isinstance(v, str) else bool(v)
+                stats = run_fib_golden_backtest(
+                    df_backtest, **common_kwargs,
+                    swing_bars=int(_override("swing_bars", 20)),
+                    min_leg_pts=_override("min_leg_pts", 40.0),
+                    entry_fib=_override("entry_fib", 0.618),
+                    stop_fib=_override("stop_fib", 1.0),
+                    stop_buffer_pts=_override("stop_buffer_pts", 5.0),
+                    target_ext=_override("target_ext", 1.618),
+                    rsi_confirm=_override("rsi_confirm", True, _b),
+                    rsi_len=int(_override("rsi_len", 14)),
+                    rsi_long_max=_override("rsi_long_max", 45.0),
+                    rsi_short_min=_override("rsi_short_min", 55.0),
+                    candle_confirm=_override("candle_confirm", True, _b),
+                    ema_trend=int(_override("ema_trend", 200)),
+                    allow_short=_override("allow_short", True, _b),
                 )
             else:
                 stats = run_fast_sma_crossover_backtest(

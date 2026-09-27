@@ -41,6 +41,20 @@ RECOGNIZED_STRATEGY_INPUTS = {
     "HAMMER_RATIO": "hammer_ratio",
     "STOP_LOSS_PTS": "stop_loss_pts",
     "TAKE_PROFIT_PTS": "take_profit_pts",
+    # fib_golden (run_fib_golden_backtest)
+    "SWING_BARS": "swing_bars",
+    "MIN_LEG_PTS": "min_leg_pts",
+    "ENTRY_FIB": "entry_fib",
+    "STOP_FIB": "stop_fib",
+    "STOP_BUFFER_PTS": "stop_buffer_pts",
+    "TARGET_EXT": "target_ext",
+    "RSI_CONFIRM": "rsi_confirm",
+    "RSI_LEN": "rsi_len",
+    "RSI_LONG_MAX": "rsi_long_max",
+    "RSI_SHORT_MIN": "rsi_short_min",
+    "CANDLE_CONFIRM": "candle_confirm",
+    "EMA_TREND": "ema_trend",
+    "ALLOW_SHORT": "allow_short",
 }
 
 
@@ -639,6 +653,300 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
         "ReturnPct": return_frac,
     })
 
+    return {
+        "Equity Final [$]": equity_final,
+        "Return [%]": return_total_pct,
+        "Max. Drawdown [%]": max_dd_pct,
+        "Buy & Hold Return [%]": buy_hold_pct,
+        "Sharpe Ratio": None,
+        "Sortino Ratio": None,
+        "_trades": trades_df,
+    }
+
+
+# ============================================================ fib_golden
+# אסטרטגיית "פיבונאצ'י + יחס הזהב": פיבונאצ'י מגדיר את המפה (עד לאן צפוי
+# התיקון להגיע ועד לאן התנועה יכולה להמשיך), ואינדיקטור שני (RSI ו/או נר
+# היפוך) נותן את הטריגר בתוך האזור. מנוע וקטורי-קבוע-מראש, אותו דפוס בדיוק כמו
+# run_hammer_rsi_backtest: מסומן ב-"# strategy: fib_golden" בשורה הראשונה.
+#
+# הלוגיקה:
+# 1. נקודות מפנה (swing high / swing low): בר שהוא הגבוה/הנמוך ביותר בחלון של
+#    SWING_BARS ברים לכל צד. נקודת מפנה "ידועה" רק SWING_BARS ברים אחרי שקרתה
+#    (אין הצצה לעתיד).
+# 2. הרגל (leg) = מנקודת המפנה הישנה לחדשה. מפנה-נמוך ואז מפנה-גבוה = רגל
+#    עולה (מחפשים לונג בתיקון); הפוך = רגל יורדת (שורט).
+# 3. רמות פיבונאצ'י על הרגל: כניסה בתיקון של ENTRY_FIB (0.618 = יחס הזהב),
+#    סטופ מעבר לתיקון של STOP_FIB (1.0 = נקודת המפנה) פחות/ועוד STOP_BUFFER_PTS,
+#    יעד בהארכה של TARGET_EXT מהרגל (1.0 = חזרה לקצה הרגל, 1.618 = הארכת זהב).
+# 4. טריגר: הבר נוגע ברמת הכניסה (low<=רמה בלונג) אבל נסגר מעל רמת הסטופ, ובנוסף
+#    RSI_CONFIRM: RSI מתחת ל-RSI_LONG_MAX ומתחיל לעלות (בשורט - מעל RSI_SHORT_MIN
+#    ומתחיל לרדת); CANDLE_CONFIRM: נר בכיוון העסקה (close>open בלונג).
+#    EMA_TREND>0: לונג רק מעל ה-EMA, שורט רק מתחתיו (0 = כבוי).
+# 5. מילוי בפתיחת הבר הבא (+סליפג'), יציאה בסטופ/יעד - הראשון שנוגע בו
+#    high/low. עסקה אחת לכל רגל (לא נכנסים שוב לאותו תיקון), עסקאות בלעדיות.
+
+FIB_GOLDEN_CODE = """\
+# strategy: fib_golden
+# Fibonacci retracement + golden ratio, confirmed by a second indicator.
+# Map:     swing low -> swing high (or reverse) defines the leg.
+# Entry:   pullback touches ENTRY_FIB of the leg (0.618 = golden ratio).
+# Trigger: RSI turning back in the trade direction and/or a candle closing that way.
+# Stop:    beyond STOP_FIB of the leg (1.0 = the swing point) + buffer.
+# Target:  TARGET_EXT of the leg (1.0 = retest the swing, 1.618 = golden extension).
+SWING_BARS = 20        # input
+MIN_LEG_PTS = 40       # input
+ENTRY_FIB = 0.618      # input
+STOP_FIB = 1.0         # input
+STOP_BUFFER_PTS = 5    # input
+TARGET_EXT = 1.618     # input
+RSI_CONFIRM = True     # input
+RSI_LEN = 14           # input
+RSI_LONG_MAX = 45      # input
+RSI_SHORT_MIN = 55     # input
+CANDLE_CONFIRM = True  # input
+EMA_TREND = 200        # input
+ALLOW_SHORT = True     # input
+"""
+
+
+def _known_pivots(values: np.ndarray, n_side: int, is_high: bool):
+    """מחזירה (ערך, אינדקס) של נקודת המפנה האחרונה ש*כבר ידועה* בכל בר.
+    מפנה בבר j מאושר רק בבר j+n_side (החלון סביבו סגור) - משם והלאה הוא
+    "הידוע האחרון" עד שמאושר מפנה חדש (ffill). NaN עד המפנה הראשון."""
+    n = len(values)
+    win = 2 * n_side + 1
+    s = pd.Series(values)
+    ext = s.rolling(win, center=True).max() if is_high else s.rolling(win, center=True).min()
+    is_piv = (s == ext).to_numpy() & ~np.isnan(ext.to_numpy())
+    piv_idx = np.flatnonzero(is_piv)
+    confirm_at = piv_idx + n_side
+    keep = confirm_at < n
+    piv_idx, confirm_at = piv_idx[keep], confirm_at[keep]
+    val = np.full(n, np.nan)
+    idx = np.full(n, np.nan)
+    val[confirm_at] = values[piv_idx]
+    idx[confirm_at] = piv_idx
+    val = pd.Series(val).ffill().to_numpy()
+    idx = pd.Series(idx).ffill().to_numpy()
+    return val, idx
+
+
+def run_fib_golden_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
+                            size: float = 1.0,
+                            multiplier: float = 1.0,
+                            slippage_ticks: float = 0.0,
+                            commission_per_contract: float = 0.0,
+                            market_order: bool = True,
+                            tick_size: float = MNQ_TICK_SIZE,
+                            swing_bars: int = 20,
+                            min_leg_pts: float = 40.0,
+                            entry_fib: float = 0.618,
+                            stop_fib: float = 1.0,
+                            stop_buffer_pts: float = 5.0,
+                            target_ext: float = 1.618,
+                            rsi_confirm: bool = True,
+                            rsi_len: int = 14,
+                            rsi_long_max: float = 45.0,
+                            rsi_short_min: float = 55.0,
+                            candle_confirm: bool = True,
+                            ema_trend: int = 200,
+                            allow_short: bool = True) -> dict:
+    """ראו ההסבר בראש הקטע (fib_golden). מחזיר את אותו מבנה תוצאה בדיוק כמו
+    run_hammer_rsi_backtest, כך שכל הממשק (Key Stats / Performance / Trades /
+    markers) עובד בלי שינוי."""
+    swing_bars = max(2, int(swing_bars))
+    if df is None or len(df) < 2 * swing_bars + 3:
+        raise StrategyCompileError("אין מספיק נרות להרצה")
+    print(f"Backtest starting on {len(df)} bars from {df.index[0]} to {df.index[-1]}", flush=True)
+
+    times = df.index.to_numpy()
+    open_ = df["Open"].to_numpy(dtype=float)
+    high = df["High"].to_numpy(dtype=float)
+    low = df["Low"].to_numpy(dtype=float)
+    close = df["Close"].to_numpy(dtype=float)
+    n = len(close)
+
+    # --- 1+2. נקודות מפנה ידועות והרגל הנוכחית ---
+    ph_val, ph_idx = _known_pivots(high, swing_bars, True)
+    pl_val, pl_idx = _known_pivots(low, swing_bars, False)
+    have_both = ~np.isnan(ph_idx) & ~np.isnan(pl_idx)
+    up_leg = have_both & (ph_idx > pl_idx)     # נמוך ואז גבוה: תיקון כלפי מטה, לונג
+    down_leg = have_both & (pl_idx > ph_idx)   # גבוה ואז נמוך: תיקון כלפי מעלה, שורט
+    leg = ph_val - pl_val
+    big_enough = leg >= float(min_leg_pts)
+
+    # --- 3. רמות פיבונאצ'י (וקטורי, לכל בר לפי הרגל הידועה לו) ---
+    buf = float(stop_buffer_pts)
+    long_entry_lvl = ph_val - float(entry_fib) * leg
+    long_stop_lvl = ph_val - float(stop_fib) * leg - buf
+    long_target_lvl = pl_val + float(target_ext) * leg
+    short_entry_lvl = pl_val + float(entry_fib) * leg
+    short_stop_lvl = pl_val + float(stop_fib) * leg + buf
+    short_target_lvl = ph_val - float(target_ext) * leg
+
+    # --- 4. טריגרים ---
+    rsi_arr = rsi(close, int(rsi_len))
+    prev_rsi = np.empty(n); prev_rsi[0] = np.nan; prev_rsi[1:] = rsi_arr[:-1]
+    if rsi_confirm:
+        rsi_ok_long = (rsi_arr <= float(rsi_long_max)) & (rsi_arr > prev_rsi)
+        rsi_ok_short = (rsi_arr >= float(rsi_short_min)) & (rsi_arr < prev_rsi)
+    else:
+        rsi_ok_long = rsi_ok_short = np.ones(n, dtype=bool)
+    if candle_confirm:
+        candle_ok_long = close > open_
+        candle_ok_short = close < open_
+    else:
+        candle_ok_long = candle_ok_short = np.ones(n, dtype=bool)
+    if int(ema_trend) > 0:
+        ema_arr = ema(close, int(ema_trend))
+        trend_ok_long = close > ema_arr
+        trend_ok_short = close < ema_arr
+    else:
+        trend_ok_long = trend_ok_short = np.ones(n, dtype=bool)
+
+    long_signal = (up_leg & big_enough
+                   & (low <= long_entry_lvl) & (close > long_stop_lvl)
+                   & rsi_ok_long & candle_ok_long & trend_ok_long)
+    short_signal = (down_leg & big_enough
+                    & (high >= short_entry_lvl) & (close < short_stop_lvl)
+                    & rsi_ok_short & candle_ok_short & trend_ok_short)
+    if not allow_short:
+        short_signal = np.zeros(n, dtype=bool)
+
+    long_idx = np.flatnonzero(long_signal)
+    short_idx = np.flatnonzero(short_signal)
+    all_idx = np.concatenate([long_idx, short_idx])
+    is_long_arr = np.concatenate([
+        np.ones(len(long_idx), dtype=bool), np.zeros(len(short_idx), dtype=bool),
+    ])
+    order = np.argsort(all_idx, kind="stable")
+    all_idx = all_idx[order]
+    is_long_arr = is_long_arr[order]
+
+    slippage_amount = (float(slippage_ticks) * float(tick_size)) if market_order else 0.0
+
+    entry_times, exit_times = [], []
+    entry_prices, exit_prices, sizes = [], [], []
+    entry_fill_idxs, exit_idxs = [], []
+    used_legs: set = set()   # (pivot_low_idx, pivot_high_idx) - עסקה אחת לכל רגל
+
+    n_events = len(all_idx)
+    i_ptr = 0
+    while i_ptr < n_events:
+        sig_i = int(all_idx[i_ptr])
+        is_long = bool(is_long_arr[i_ptr])
+        leg_key = (int(pl_idx[sig_i]), int(ph_idx[sig_i]), is_long)
+        fill_i = sig_i + 1
+        if fill_i >= n:
+            break
+        if leg_key in used_legs:
+            i_ptr += 1
+            continue
+
+        raw_entry = open_[fill_i]
+        entry_price = raw_entry + slippage_amount if is_long else raw_entry - slippage_amount
+        if is_long:
+            sl_level = float(long_stop_lvl[sig_i])
+            tp_level = float(long_target_lvl[sig_i])
+            if not (sl_level < entry_price < tp_level):
+                i_ptr += 1
+                continue  # הפתיחה כבר מעבר לסטופ/ליעד - אין עסקה הגיונית
+            hit_tp = high[fill_i + 1:] >= tp_level
+            hit_sl = low[fill_i + 1:] <= sl_level
+        else:
+            sl_level = float(short_stop_lvl[sig_i])
+            tp_level = float(short_target_lvl[sig_i])
+            if not (tp_level < entry_price < sl_level):
+                i_ptr += 1
+                continue
+            hit_tp = low[fill_i + 1:] <= tp_level
+            hit_sl = high[fill_i + 1:] >= sl_level
+        hit_any = hit_tp | hit_sl
+
+        if not hit_any.any():
+            exit_i = n - 1
+            exit_price = float(close[exit_i])
+        else:
+            rel = int(np.argmax(hit_any))
+            exit_i = fill_i + 1 + rel
+            sl_hit_here = low[exit_i] <= sl_level if is_long else high[exit_i] >= sl_level
+            exit_price = sl_level if sl_hit_here else tp_level   # שני הצדדים באותו בר: פסימי
+
+        used_legs.add(leg_key)
+        entry_times.append(times[fill_i])
+        exit_times.append(times[exit_i])
+        entry_prices.append(entry_price)
+        exit_prices.append(exit_price)
+        sizes.append(size if is_long else -size)
+        entry_fill_idxs.append(fill_i)
+        exit_idxs.append(exit_i)
+
+        i_ptr += 1
+        while i_ptr < n_events and all_idx[i_ptr] <= exit_i:
+            i_ptr += 1
+
+    return _finalize_signed_trades(
+        times=times, close=close, n=n, cash=cash, multiplier=multiplier,
+        commission_per_contract=commission_per_contract,
+        entry_times=entry_times, exit_times=exit_times,
+        entry_prices=entry_prices, exit_prices=exit_prices, sizes=sizes,
+        entry_fill_idxs=entry_fill_idxs, exit_idxs=exit_idxs,
+    )
+
+
+def _finalize_signed_trades(*, times, close, n, cash, multiplier, commission_per_contract,
+                            entry_times, exit_times, entry_prices, exit_prices, sizes,
+                            entry_fill_idxs, exit_idxs) -> dict:
+    """סטטיסטיקות + equity מרשימת עסקאות עם size חתום (לונג חיובי, שורט שלילי).
+    אותו חישוב בדיוק כמו הזנב של run_hammer_rsi_backtest, מופרד כדי שמנועים
+    נוספים (fib_golden) לא ישכפלו אותו."""
+    n_trades = len(entry_prices)
+    entry_prices_arr = np.asarray(entry_prices, dtype=float)
+    exit_prices_arr = np.asarray(exit_prices, dtype=float)
+    sizes_arr = np.asarray(sizes, dtype=float)
+    entry_idx_arr = np.asarray(entry_fill_idxs, dtype=np.int64)
+    exit_idx_arr = np.asarray(exit_idxs, dtype=np.int64)
+
+    pnl = (exit_prices_arr - entry_prices_arr) * sizes_arr * multiplier
+    pnl = pnl - float(commission_per_contract) * np.abs(sizes_arr) * 2.0
+    return_frac = np.divide(
+        exit_prices_arr - entry_prices_arr, entry_prices_arr,
+        out=np.zeros(n_trades), where=entry_prices_arr != 0,
+    ) * np.sign(sizes_arr)
+
+    position_delta = np.zeros(n)
+    np.add.at(position_delta, entry_idx_arr, sizes_arr)
+    np.add.at(position_delta, exit_idx_arr, -sizes_arr)
+    position_flag = np.cumsum(position_delta)
+    entry_price_series = pd.Series(np.nan, index=np.arange(n))
+    if n_trades:
+        entry_price_series.iloc[entry_idx_arr] = entry_prices_arr
+    entry_price_ffilled = entry_price_series.ffill().to_numpy()
+    unrealized = np.where(position_flag != 0,
+                          (close - entry_price_ffilled) * position_flag * multiplier, 0.0)
+    realized_pnl_step = np.zeros(n)
+    np.add.at(realized_pnl_step, exit_idx_arr, pnl)
+    equity_curve = cash + np.cumsum(realized_pnl_step) + unrealized
+    running_max = np.maximum.accumulate(equity_curve)
+    drawdown_pct = np.where(running_max > 0, (equity_curve - running_max) / running_max * 100, 0.0)
+    max_dd_pct = float(drawdown_pct.min()) if n else 0.0
+
+    equity_final = cash + float(pnl.sum())
+    return_total_pct = (equity_final - cash) / cash * 100 if cash else 0.0
+    first_close = float(close[0]) if n else 0.0
+    last_close = float(close[-1]) if n else 0.0
+    buy_hold_pct = ((last_close - first_close) / first_close * 100) if first_close else 0.0
+
+    trades_df = pd.DataFrame({
+        "EntryTime": pd.to_datetime(entry_times),
+        "ExitTime": pd.to_datetime(exit_times),
+        "EntryPrice": entry_prices_arr,
+        "ExitPrice": exit_prices_arr,
+        "Size": sizes_arr,
+        "PnL": pnl,
+        "ReturnPct": return_frac,
+    })
     return {
         "Equity Final [$]": equity_final,
         "Return [%]": return_total_pct,
