@@ -958,6 +958,260 @@ def _finalize_signed_trades(*, times, close, n, cash, multiplier, commission_per
     }
 
 
+# ============================================================ כלי עזר משותפים
+def _minute_of_day(index: pd.DatetimeIndex) -> np.ndarray:
+    """דקה-ביום (0..1439) לכל בר. הקאש נשמר בשעון ניו-יורק (naive, ראו
+    data.SOURCE_TZ), לכן 09:30 = פתיחת הסשן הרגיל של ארה"ב."""
+    idx = pd.DatetimeIndex(index)
+    return (idx.hour * 60 + idx.minute).to_numpy()
+
+
+def _hhmm(text, default: int) -> int:
+    """'09:30' -> 570. מספר (למשל 930) מתקבל גם הוא. לא תקין -> ברירת מחדל."""
+    try:
+        if isinstance(text, (int, float)):
+            v = int(text)
+            return (v // 100) * 60 + (v % 100)
+        h, m = str(text).strip().split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return default
+
+
+def _simulate_signed_signals(*, times, open_, high, low, close, n,
+                             sig_idx: np.ndarray, sig_is_long: np.ndarray,
+                             sl_levels: np.ndarray, tp_levels: np.ndarray,
+                             max_exit_idx: np.ndarray | None,
+                             dedupe_key: np.ndarray | None,
+                             size: float, slippage_amount: float,
+                             cash: float, multiplier: float,
+                             commission_per_contract: float) -> dict:
+    """הלב המשותף של המנועים המהירים: לכל אות (ממוין בזמן) מילוי בפתיחת הבר
+    הבא, ואז חיפוש וקטורי של הבר הראשון שנוגע בסטופ/יעד (או יציאה כפויה ב-
+    max_exit_idx - למשל סוף הסשן). עסקאות בלעדיות; dedupe_key (למשל תאריך)
+    מאפשר "עסקה אחת לכל מפתח". סטופ ויעד באותו בר -> פסימי (סטופ)."""
+    order = np.argsort(sig_idx, kind="stable")
+    sig_idx, sig_is_long = sig_idx[order], sig_is_long[order]
+    sl_levels, tp_levels = sl_levels[order], tp_levels[order]
+    if max_exit_idx is not None:
+        max_exit_idx = max_exit_idx[order]
+    if dedupe_key is not None:
+        dedupe_key = dedupe_key[order]
+
+    entry_times, exit_times = [], []
+    entry_prices, exit_prices, sizes = [], [], []
+    entry_fill_idxs, exit_idxs = [], []
+    used: set = set()
+    n_events = len(sig_idx)
+    i_ptr = 0
+    while i_ptr < n_events:
+        sig_i = int(sig_idx[i_ptr])
+        is_long = bool(sig_is_long[i_ptr])
+        fill_i = sig_i + 1
+        if fill_i >= n:
+            break
+        key = None if dedupe_key is None else (dedupe_key[i_ptr], is_long)
+        if key is not None and key in used:
+            i_ptr += 1
+            continue
+        raw_entry = open_[fill_i]
+        entry_price = raw_entry + slippage_amount if is_long else raw_entry - slippage_amount
+        sl_level, tp_level = float(sl_levels[i_ptr]), float(tp_levels[i_ptr])
+        ok = (sl_level < entry_price < tp_level) if is_long else (tp_level < entry_price < sl_level)
+        if not ok or not np.isfinite(sl_level) or not np.isfinite(tp_level):
+            i_ptr += 1
+            continue
+        last_i = n - 1 if max_exit_idx is None else int(min(n - 1, max_exit_idx[i_ptr]))
+        seg_hi = high[fill_i + 1:last_i + 1]
+        seg_lo = low[fill_i + 1:last_i + 1]
+        if is_long:
+            hit_tp, hit_sl = seg_hi >= tp_level, seg_lo <= sl_level
+        else:
+            hit_tp, hit_sl = seg_lo <= tp_level, seg_hi >= sl_level
+        hit_any = hit_tp | hit_sl
+        if hit_any.size and hit_any.any():
+            rel = int(np.argmax(hit_any))
+            exit_i = fill_i + 1 + rel
+            sl_hit_here = low[exit_i] <= sl_level if is_long else high[exit_i] >= sl_level
+            exit_price = sl_level if sl_hit_here else tp_level
+        else:
+            exit_i = max(fill_i, last_i)     # יציאה כפויה (סוף סשן / סוף דאטה) בסגירה
+            exit_price = float(close[exit_i])
+        if key is not None:
+            used.add(key)
+        entry_times.append(times[fill_i]); exit_times.append(times[exit_i])
+        entry_prices.append(entry_price); exit_prices.append(exit_price)
+        sizes.append(size if is_long else -size)
+        entry_fill_idxs.append(fill_i); exit_idxs.append(exit_i)
+        i_ptr += 1
+        while i_ptr < n_events and sig_idx[i_ptr] <= exit_i:
+            i_ptr += 1
+
+    return _finalize_signed_trades(
+        times=times, close=close, n=n, cash=cash, multiplier=multiplier,
+        commission_per_contract=commission_per_contract,
+        entry_times=entry_times, exit_times=exit_times,
+        entry_prices=entry_prices, exit_prices=exit_prices, sizes=sizes,
+        entry_fill_idxs=entry_fill_idxs, exit_idxs=exit_idxs,
+    )
+
+
+# ============================================================ orb
+# פריצת טווח הפתיחה (Opening Range Breakout): הגבוה/הנמוך של RANGE_MINUTES
+# הדקות הראשונות של הסשן הרגיל (09:30 ניו-יורק) מגדירים טווח; סגירה מעליו =
+# לונג, מתחתיו = שורט. סטופ בצד השני של הטווח (או STOP_PTS קבוע אם > 0), יעד
+# = TARGET_RR כפול הסיכון. עסקה אחת ליום לכל כיוון, יציאה כפויה ב-EXIT_TIME.
+ORB_CODE = """\
+# strategy: orb
+# Opening Range Breakout (US regular session, New York time).
+# Range:  high/low of the first RANGE_MINUTES after SESSION_OPEN.
+# Entry:  a bar closes above the range high (+BUFFER_PTS) -> long; below the low -> short.
+# Stop:   other side of the range (or STOP_PTS if > 0). Target: TARGET_RR x risk.
+# Exit:   forced flat at EXIT_TIME. One trade per day per direction.
+RANGE_MINUTES = 15     # input
+BUFFER_PTS = 2         # input
+STOP_PTS = 0           # input
+TARGET_RR = 2.0        # input
+MIN_RANGE_PTS = 20     # input
+MAX_RANGE_PTS = 200    # input
+LAST_ENTRY_MIN = 180   # input
+ALLOW_SHORT = True     # input
+"""
+
+
+def run_orb_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: float = 1.0,
+                     multiplier: float = 1.0, slippage_ticks: float = 0.0,
+                     commission_per_contract: float = 0.0, market_order: bool = True,
+                     tick_size: float = MNQ_TICK_SIZE,
+                     range_minutes: int = 15, buffer_pts: float = 2.0, stop_pts: float = 0.0,
+                     target_rr: float = 2.0, min_range_pts: float = 20.0,
+                     max_range_pts: float = 200.0, last_entry_min: int = 180,
+                     allow_short: bool = True,
+                     session_open: str = "09:30", exit_time: str = "15:55") -> dict:
+    if df is None or len(df) < 50:
+        raise StrategyCompileError("אין מספיק נרות להרצה")
+    print(f"Backtest starting on {len(df)} bars from {df.index[0]} to {df.index[-1]}", flush=True)
+    times = df.index.to_numpy()
+    open_ = df["Open"].to_numpy(dtype=float); high = df["High"].to_numpy(dtype=float)
+    low = df["Low"].to_numpy(dtype=float); close = df["Close"].to_numpy(dtype=float)
+    n = len(close)
+    mod = _minute_of_day(df.index)
+    open_min = _hhmm(session_open, 570)
+    exit_min = _hhmm(exit_time, 955)
+    rng_end = open_min + int(range_minutes)
+    day = pd.DatetimeIndex(df.index).normalize()
+    day_codes, _ = pd.factorize(day)
+
+    in_range = (mod >= open_min) & (mod < rng_end)
+    s_hi = pd.Series(np.where(in_range, high, np.nan))
+    s_lo = pd.Series(np.where(in_range, low, np.nan))
+    or_high = s_hi.groupby(day_codes).transform("max").to_numpy()
+    or_low = s_lo.groupby(day_codes).transform("min").to_numpy()
+    or_size = or_high - or_low
+    # אינדקס הבר האחרון של כל יום שעדיין <= exit_time (יציאה כפויה)
+    pos = np.arange(n)
+    ok_exit = mod <= exit_min
+    last_ok = pd.Series(np.where(ok_exit, pos, -1)).groupby(day_codes).transform("max").to_numpy()
+    day_exit_idx = np.where(last_ok >= 0, last_ok, pos)
+
+    window = (mod >= rng_end) & (mod < min(exit_min, rng_end + int(last_entry_min))) \
+        & np.isfinite(or_high) & (or_size >= float(min_range_pts)) & (or_size <= float(max_range_pts))
+    long_sig = window & (close > or_high + float(buffer_pts))
+    short_sig = window & (close < or_low - float(buffer_pts)) if allow_short else np.zeros(n, dtype=bool)
+
+    li, si = np.flatnonzero(long_sig), np.flatnonzero(short_sig)
+    sig_idx = np.concatenate([li, si])
+    is_long = np.concatenate([np.ones(len(li), bool), np.zeros(len(si), bool)])
+    fill = np.minimum(sig_idx + 1, n - 1)
+    entry_est = open_[fill]
+    risk_long = (entry_est - or_low[sig_idx]) if stop_pts <= 0 else np.full(len(sig_idx), float(stop_pts))
+    risk_short = (or_high[sig_idx] - entry_est) if stop_pts <= 0 else np.full(len(sig_idx), float(stop_pts))
+    risk = np.where(is_long, risk_long, risk_short)
+    risk = np.where(risk > 0, risk, np.nan)
+    sl = np.where(is_long, entry_est - risk, entry_est + risk)
+    tp = np.where(is_long, entry_est + float(target_rr) * risk, entry_est - float(target_rr) * risk)
+    slippage_amount = (float(slippage_ticks) * float(tick_size)) if market_order else 0.0
+    return _simulate_signed_signals(
+        times=times, open_=open_, high=high, low=low, close=close, n=n,
+        sig_idx=sig_idx, sig_is_long=is_long, sl_levels=sl, tp_levels=tp,
+        max_exit_idx=day_exit_idx[sig_idx], dedupe_key=day_codes[sig_idx],
+        size=size, slippage_amount=slippage_amount, cash=cash, multiplier=multiplier,
+        commission_per_contract=commission_per_contract,
+    )
+
+
+# ============================================================ vwap_revert
+# חזרה ל-VWAP: כשהמחיר מתרחק DEVIATION_PTS מה-VWAP היומי ו-RSI קיצוני ומתחיל
+# להתהפך - נכנסים נגד התנועה עם יעד ב-VWAP עצמו וסטופ קבוע. סשן רגיל בלבד
+# כברירת מחדל, יציאה כפויה בסוף הסשן.
+VWAP_REVERT_CODE = """\
+# strategy: vwap_revert
+# Mean reversion to the session VWAP (resets daily).
+# Entry:  price is DEVIATION_PTS below VWAP, RSI <= RSI_LONG_MAX and turning up -> long
+#         (mirror above VWAP with RSI >= RSI_SHORT_MIN -> short).
+# Target: the VWAP level at signal time. Stop: STOP_PTS. Flat at EXIT_TIME.
+DEVIATION_PTS = 40     # input
+RSI_LEN = 14           # input
+RSI_LONG_MAX = 30      # input
+RSI_SHORT_MIN = 70     # input
+STOP_PTS = 30          # input
+RTH_ONLY = True        # input
+ALLOW_SHORT = True     # input
+"""
+
+
+def run_vwap_revert_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: float = 1.0,
+                             multiplier: float = 1.0, slippage_ticks: float = 0.0,
+                             commission_per_contract: float = 0.0, market_order: bool = True,
+                             tick_size: float = MNQ_TICK_SIZE,
+                             deviation_pts: float = 40.0, rsi_len: int = 14,
+                             rsi_long_max: float = 30.0, rsi_short_min: float = 70.0,
+                             stop_pts: float = 30.0, rth_only: bool = True,
+                             allow_short: bool = True,
+                             session_open: str = "09:30", exit_time: str = "15:55") -> dict:
+    if df is None or len(df) < 50:
+        raise StrategyCompileError("אין מספיק נרות להרצה")
+    print(f"Backtest starting on {len(df)} bars from {df.index[0]} to {df.index[-1]}", flush=True)
+    times = df.index.to_numpy()
+    open_ = df["Open"].to_numpy(dtype=float); high = df["High"].to_numpy(dtype=float)
+    low = df["Low"].to_numpy(dtype=float); close = df["Close"].to_numpy(dtype=float)
+    n = len(close)
+    vwap = session_vwap(df)
+    rsi_arr = rsi(close, int(rsi_len))
+    prev_rsi = np.empty(n); prev_rsi[0] = np.nan; prev_rsi[1:] = rsi_arr[:-1]
+    mod = _minute_of_day(df.index)
+    open_min, exit_min = _hhmm(session_open, 570), _hhmm(exit_time, 955)
+    day_codes, _ = pd.factorize(pd.DatetimeIndex(df.index).normalize())
+    pos = np.arange(n)
+    if rth_only:
+        window = (mod >= open_min) & (mod < exit_min)
+        last_ok = pd.Series(np.where(mod <= exit_min, pos, -1)).groupby(day_codes).transform("max").to_numpy()
+        day_exit_idx = np.where(last_ok >= 0, last_ok, pos)
+        max_exit = day_exit_idx
+    else:
+        window = np.ones(n, dtype=bool)
+        max_exit = None
+    dev = float(deviation_pts)
+    long_sig = window & (close <= vwap - dev) & (rsi_arr <= float(rsi_long_max)) & (rsi_arr > prev_rsi)
+    short_sig = (window & (close >= vwap + dev) & (rsi_arr >= float(rsi_short_min)) & (rsi_arr < prev_rsi)) \
+        if allow_short else np.zeros(n, dtype=bool)
+    li, si = np.flatnonzero(long_sig), np.flatnonzero(short_sig)
+    sig_idx = np.concatenate([li, si])
+    is_long = np.concatenate([np.ones(len(li), bool), np.zeros(len(si), bool)])
+    fill = np.minimum(sig_idx + 1, n - 1)
+    entry_est = open_[fill]
+    sl = np.where(is_long, entry_est - float(stop_pts), entry_est + float(stop_pts))
+    tp = vwap[sig_idx]
+    slippage_amount = (float(slippage_ticks) * float(tick_size)) if market_order else 0.0
+    return _simulate_signed_signals(
+        times=times, open_=open_, high=high, low=low, close=close, n=n,
+        sig_idx=sig_idx, sig_is_long=is_long, sl_levels=sl, tp_levels=tp,
+        max_exit_idx=None if max_exit is None else max_exit[sig_idx], dedupe_key=None,
+        size=size, slippage_amount=slippage_amount, cash=cash, multiplier=multiplier,
+        commission_per_contract=commission_per_contract,
+    )
+
+
 # סגול אחיד לכניסה וליציאה - בדיוק כמו חצי הכניסה/יציאה של Strategy Tester ב-TradingView
 # (שם צובעים את שני האירועים באותו צבע, ולא ירוק/אדום לפי סוג האירוע).
 ENTRY_COLOR = "#C77DFF"
