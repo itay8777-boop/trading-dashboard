@@ -20,7 +20,7 @@ from dash import ALL, Dash, Input, Output, State, callback, callback_context, dc
 # ולא ל-dashboard/chart.py שנטען כ-`.chart`.
 from chart import _evenly_sampled_indices, build_performance_chart
 
-from . import lab, live, panels
+from . import lab, live, panels, results
 from .chart import build_history_chunk_payload, build_live_bar_payload, build_payload
 from .data import (
     from_display_epoch,
@@ -49,7 +49,7 @@ from .strategy import (
 )
 
 DEFAULT_SYMBOL = "MNQ"
-DEFAULT_TF = "1m"
+DEFAULT_TF = "5m"
 
 # מחמם את קאש ה-1m בזיכרון ברקע ברגע שהמודול נטען (לפני שהמשתמש בכלל פתח את
 # הדפדפן) - כדי שהגלילה הראשונה שלו כבר לא תשלם את עלות הקריאה החד-פעמית
@@ -81,7 +81,7 @@ MAX_VISIBLE_MARKER_TRADES = 250
 # "List of Trades" מוצג בעמודים של כמה שורות - 150K+ שורות DOM בטבלה אחת (גם
 # אחרי אופטימיזציית בניית ה-HTML עצמה) עדיין מקפיאות את הדפדפן ברגע שהוא מנסה
 # לפרסר/לצייר אותן. ראו ui_components.trades_table_html.
-TRADES_PAGE_SIZE = 100
+TRADES_PAGE_SIZE = results.TRADES_PAGE
 
 # פילטר תקופה מעל גרף ה-Performance (Overview) - בדיוק כמו ב-Strategy Tester
 # של TradingView. "range" (ברירת מחדל) ו-"all" שקולים באפליקציה הזו: הבקטסט
@@ -469,14 +469,17 @@ def build_layout() -> html.Div:
                         # משוב חזותי במשך כל משך הריצה (בקטסט על 7 שנות MNQ/1m יכול
                         # לקחת כ-3 דקות, backtesting.py מריץ בר-אחר-בר בפייתון, לא
                         # מוקטר) - בדיוק מה שנראה כאילו "הכפתור לא עושה כלום".
+                        html.Div(id="tester-error", className="tester-error", hidden=True),
                         dcc.Loading(html.Div(id="key-stats"), type="dot", color="#2962FF"),
                         dcc.Tabs(id="result-tabs", value="overview", className="result-tabs",
                                  children=[
-                                     dcc.Tab(label="Overview", value="overview",
+                                     dcc.Tab(label="סקירה", value="overview",
                                              className="rtab", selected_className="rtab-sel"),
-                                     dcc.Tab(label="Performance Summary", value="summary",
+                                     dcc.Tab(label="ביצועים", value="summary",
                                              className="rtab", selected_className="rtab-sel"),
-                                     dcc.Tab(label="List of Trades", value="trades",
+                                     dcc.Tab(label="עסקאות", value="trades",
+                                             className="rtab", selected_className="rtab-sel"),
+                                     dcc.Tab(label="חודשי", value="monthly",
                                              className="rtab", selected_className="rtab-sel"),
                                  ]),
                         # פילטר תקופה מעל גרף ה-Performance - מוצג רק בלשונית overview
@@ -509,10 +512,10 @@ def build_layout() -> html.Div:
                         dcc.Store(id="trades-page", data=0),
                         html.Div(id="trades-pagination", className="trades-pagination",
                                  style={"display": "none"}, children=[
-                                     html.Button("\u2039 Prev", id="trades-prev-btn", n_clicks=0,
+                                     html.Button("‹ הקודם", id="trades-prev-btn", n_clicks=0,
                                                  className="trades-page-btn"),
                                      html.Span(id="trades-page-info", className="trades-page-info"),
-                                     html.Button("Next \u203a", id="trades-next-btn", n_clicks=0,
+                                     html.Button("הבא ›", id="trades-next-btn", n_clicks=0,
                                                  className="trades-page-btn"),
                                  ]),
                     ]),
@@ -650,18 +653,25 @@ def load_chart(symbol, timeframe):
     symbol = (symbol or "").strip().upper()
     if not symbol:
         return no_update, "הזן סימבול", "status error"
+    from_cache_note = ""
     try:
         df = load_ohlcv_preferring_1m_cache(symbol, timeframe, days=INITIAL_DAYS[timeframe], extended_hours=True)
     except DataError as exc:
-        return no_update, str(exc), "status error"
+        # IB לא זמין (Gateway סגור / API כבוי): מציגים את הקאש המקומי במקום גרף שחור.
+        cached = load_full_history(symbol, timeframe, extended_hours=True)
+        if cached is None or cached.empty:
+            return no_update, str(exc), "status error"
+        cutoff = cached.index[-1] - pd.Timedelta(days=INITIAL_DAYS[timeframe])
+        df = cached[cached.index >= cutoff]
+        from_cache_note = " · מהקאש (IB מנותק)"
 
     _FRAMES[(symbol, timeframe)] = df
     _RESULTS.pop("last", None)
     live.subscribe(symbol, timeframe)  # מעביר את מנוי ה-streaming לסימבול/טיים-פריים החדשים
     years = (df.index.max() - df.index.min()).days / 365.25
     status = (f"{len(df):,} bars · {df.index.min():%b %d, %Y} → {df.index.max():%b %d, %Y} "
-              f"({years:.1f}y)")
-    return build_payload(df, symbol, timeframe), status, "status"
+              f"({years:.1f}y){from_cache_note}")
+    return build_payload(df, symbol, timeframe), status, ("status warn" if from_cache_note else "status")
 
 
 @callback(
@@ -933,12 +943,12 @@ def _trades_pagination_state(tab: str, trade_count: int, page: int):
         return {"display": "none"}, ""
     n_pages = max(1, -(-trade_count // TRADES_PAGE_SIZE))  # ceil division
     return ({"display": "flex"},
-            f"Page {page + 1} / {n_pages} ({trade_count:,} trades)")
+            f"עמוד {page + 1} מתוך {n_pages} · {trade_count:,} עסקאות")
 
 
 def _perf_period_bar_style(tab: str):
     """פילטר התקופה רלוונטי רק לגרף ה-Overview - מוסתר בשאר הלשוניות."""
-    return {"display": "flex"} if tab == "overview" else {"display": "none"}
+    return {"display": "none"}
 
 
 def _filter_trades_by_period(trades: pd.DataFrame, period: str,
@@ -970,14 +980,9 @@ def _filter_trades_by_period(trades: pd.DataFrame, period: str,
 
 
 def _key_stats_body(stats, cash: float, period: str, custom_from, custom_to):
-    """Key stats תמיד לפי הפילטר הנוכחי - גם כשלא נמצאים בלשונית Overview
-    (הכותרת יושבת מעל הלשוניות, לא בתוכן, ראו requirement המפורש)."""
-    trades = stats["_trades"]
-    if trades.empty or not period or period in ("range", "all"):
-        return _html(panels.key_stats(stats, cash))
-    filtered = _filter_trades_by_period(trades, period, custom_from, custom_to)
-    label = PERIOD_LABELS.get(period, period)
-    return _html(panels.key_stats_for_period(filtered, cash, len(trades), label))
+    """כרטיסי ה-KPI בראש התוצאות (results.kpi_tiles). פילטר התקופה הישן בוטל -
+    הטווח נבחר לפני הריצה בסרגל העבודה."""
+    return results.kpi_tiles(stats, cash)
 
 
 # ---------------------------------------------------------------- הרצת אסטרטגיה
@@ -1135,22 +1140,12 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
 def _result_body(tab: str, stats, cash: float, page: int = 0,
                  period: str = "range", custom_from: str | None = None, custom_to: str | None = None):
     if tab == "summary":
-        return _html(panels.performance_summary(stats, cash))
+        return results.performance_table(stats, cash)
     if tab == "trades":
-        return _html(panels.trades_list(stats, page=page, page_size=TRADES_PAGE_SIZE))
-
-    # tab == "overview": כאן בלבד מוחל פילטר התקופה - Performance Summary/List
-    # of Trades תמיד מציגים את כל ההיסטוריה (ראו requirement המפורש).
-    trades = stats["_trades"]
-    if trades.empty:
-        return _html(panels.empty("לא בוצעו עסקאות."))
-    filtered = _filter_trades_by_period(trades, period, custom_from, custom_to)
-    if filtered.empty:
-        return _html(panels.empty("אין עסקאות בטווח התאריכים שנבחר."))
-    fig = build_performance_chart(filtered, start_time=filtered["EntryTime"].min())
-    fig.update_layout(height=260, margin=dict(l=10, r=80, t=28, b=10))
-    return dcc.Graph(figure=fig, config={"displayModeBar": False},
-                     style={"height": "260px"})
+        return results.trades_table(stats, page=page, page_size=TRADES_PAGE_SIZE)
+    if tab == "monthly":
+        return results.monthly(stats, cash)
+    return results.overview(stats, cash)
 
 
 
@@ -1461,6 +1456,13 @@ def load_from_history(n_clicks_list):
     if not rec:
         return no_update, no_update
     return lab.run_code(rec), "tester"
+
+
+@callback(Output("tester-error", "children"), Output("tester-error", "hidden"),
+          Input("run-error", "children"), prevent_initial_call=True)
+def mirror_run_error(text):
+    text = (text or "").strip()
+    return (f"⚠ {text}", False) if text else ("", True)
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)

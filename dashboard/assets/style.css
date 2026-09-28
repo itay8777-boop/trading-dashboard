@@ -132,7 +132,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--
 }
 
 .bottom-panel {
-    flex: 0 0 auto; height: 46vh; display: flex; flex-direction: column;
+    flex: 0 0 auto; height: 58vh; display: flex; flex-direction: column;
     background: var(--panel); border-top: 1px solid var(--border);
 }
 /* במצב מכווץ נשארת רק רצועת הלשוניות, והגרף מתרחב לכל הגובה. */
@@ -854,3 +854,41 @@ table.tv-table th { background: var(--surface-2); font-family: var(--font); font
 .cat-actions { margin-top: auto; }
 .editor-row { direction: rtl; }
 .editor-note { background: rgba(61,123,255,.08); border: 1px solid rgba(61,123,255,.25); color: var(--text); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12.5px; margin-bottom: 10px; }
+
+/* ================= בודק אסטרטגיות: תוצאות (results.py) ================= */
+.tester-error { background: rgba(240,71,90,.10); border: 1px solid rgba(240,71,90,.4); color: #FF8A95; border-radius: var(--radius-sm); padding: 9px 12px; margin-bottom: 10px; font-size: 13px; direction: rtl; }
+.status.warn { color: #E2B93B; }
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 12px; direction: rtl; }
+@media (min-width: 1500px) { .kpi-grid { grid-template-columns: repeat(8, 1fr); } }
+.kpi { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px 10px; display: flex; flex-direction: column; gap: 3px; text-align: right; position: relative; overflow: hidden; }
+.kpi::before { content: ""; position: absolute; inset-inline-start: 0; top: 0; bottom: 0; width: 3px; background: var(--line-strong); }
+.kpi.pos::before { background: var(--up); } .kpi.neg::before { background: var(--down); }
+.kpi-label { color: var(--muted); font-size: 11.5px; }
+.kpi-value { font-size: 22px; font-weight: 700; letter-spacing: -.01em; font-variant-numeric: tabular-nums; unicode-bidi: plaintext; }
+.kpi.pos .kpi-value { color: var(--up); } .kpi.neg .kpi-value { color: var(--down); }
+.kpi-sub { color: var(--muted-2); font-size: 11px; unicode-bidi: plaintext; }
+.result-tabs { direction: rtl; }
+.result-tabs .rtab { margin-right: 0 !important; margin-left: 22px !important; }
+.chart-card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px 4px; margin-bottom: 12px; direction: rtl; }
+.chart-card-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin: 2px 4px 6px; }
+.chart-card-head .muted, .muted { color: var(--muted); font-weight: 400; font-size: 12px; }
+.split-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; direction: rtl; }
+.split-card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; font-size: 12.5px; }
+.split-title { font-weight: 600; margin-bottom: 6px; color: var(--text); }
+.split-line { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed var(--line); font-variant-numeric: tabular-nums; }
+.split-line:last-child { border-bottom: 0; }
+.split-line span:last-child, .perf-table td, .trades-table td { unicode-bidi: plaintext; }
+.pos { color: var(--up); } .neg { color: var(--down); } .neu { color: var(--text); }
+.table-wrap { border: 1px solid var(--line); border-radius: var(--radius); overflow: auto; background: var(--surface-1); direction: rtl; }
+.perf-table, .trades-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.perf-table th, .trades-table th { position: sticky; top: 0; background: var(--surface-2); color: var(--muted); font-size: 11px; font-weight: 600; padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.perf-table td, .trades-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.perf-table tr:last-child td, .trades-table tr:last-child td { border-bottom: 0; }
+.perf-table tr:hover td, .trades-table tr:hover td { background: rgba(255,255,255,.025); }
+.perf-table td.metric { color: var(--text); font-weight: 500; }
+.perf-table th:not(:first-child), .perf-table td:not(.metric) { text-align: center; }
+.trades-table td.muted { color: var(--muted); }
+.year-row { display: flex; flex-wrap: wrap; gap: 8px; direction: rtl; }
+.year-card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 14px; min-width: 110px; text-align: center; }
+.year-k { color: var(--muted); font-size: 11px; } .year-v { font-weight: 700; font-size: 14px; unicode-bidi: plaintext; }
+.trades-pagination { direction: rtl; justify-content: center; gap: 12px; margin-top: 10px; }
