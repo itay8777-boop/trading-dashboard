@@ -40,3 +40,4 @@ strategies.json
 *.pem
 *.key
 .streamlit/secrets.toml
+run_history.json

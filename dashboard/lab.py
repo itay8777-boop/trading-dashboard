@@ -268,6 +268,36 @@ def slice_range(df: pd.DataFrame, bt_range: str | None, window: dict | None,
 RUN_HISTORY: deque = deque(maxlen=40)
 _run_ids = _it.count(1)
 _KEEP_TRADES = 12   # רק הריצות האחרונות שומרות את טבלת העסקאות (לעקומת ההשוואה)
+_HISTORY_PATH = __import__("pathlib").Path(__file__).resolve().parent.parent / "run_history.json"
+
+
+def _save_history() -> None:
+    """שומר את ההיסטוריה (בלי טבלאות העסקאות) כדי שתשרוד הפעלה מחדש."""
+    try:
+        import json
+        rows = [{k: v for k, v in r.items() if k != "trades"} for r in RUN_HISTORY]
+        _HISTORY_PATH.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _load_history() -> None:
+    try:
+        import json
+        if not _HISTORY_PATH.exists():
+            return
+        rows = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
+        for r in reversed(rows):
+            r["trades"] = None
+            RUN_HISTORY.appendleft(r)
+        if rows:
+            global _run_ids
+            _run_ids = _it.count(max(r["id"] for r in rows) + 1)
+    except Exception:
+        pass
+
+
+_load_history()
 
 
 def record_run(*, key: str, symbol: str, timeframe: str, range_label: str,
@@ -283,6 +313,7 @@ def record_run(*, key: str, symbol: str, timeframe: str, range_label: str,
     RUN_HISTORY.appendleft(rec)
     for old in list(RUN_HISTORY)[_KEEP_TRADES:]:
         old["trades"] = None
+    _save_history()
     return rec
 
 
@@ -294,6 +325,7 @@ def delete_run(rid: int):
     for r in list(RUN_HISTORY):
         if r["id"] == rid:
             RUN_HISTORY.remove(r)
+    _save_history()
 
 
 def run_code(rec: dict) -> str:

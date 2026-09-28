@@ -151,8 +151,8 @@ def overview(stats: dict, cash: float) -> html.Div:
     fig.update_layout(
         height=330, margin=dict(l=8, r=64, t=8, b=8), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#B2B5BE", size=11, family="Heebo, sans-serif"), showlegend=False, hovermode="x unified",
-        yaxis=dict(domain=[0.34, 1], gridcolor=LINE, zeroline=True, zerolinecolor="#3a3f4a", tickprefix="$", side="right"),
-        yaxis2=dict(domain=[0, 0.28], gridcolor=LINE, zeroline=False, tickprefix="$", side="right"),
+        yaxis=dict(domain=[0.34, 1], gridcolor=LINE, zeroline=True, zerolinecolor="#3a3f4a", tickformat="$,.0f", side="right"),
+        yaxis2=dict(domain=[0, 0.28], gridcolor=LINE, zeroline=False, tickformat="$,.0f", side="right"),
         xaxis=dict(gridcolor=LINE, showgrid=False),
     )
     m_all = metrics(tr, cash)
@@ -271,7 +271,8 @@ def monthly(stats: dict, cash: float) -> html.Div:
     fig.update_layout(height=max(160, 46 * len(years) + 60), margin=dict(l=8, r=8, t=8, b=8),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       font=dict(color="#B2B5BE", size=11, family="Heebo, sans-serif"),
-                      xaxis=dict(side="top"), yaxis=dict(autorange="reversed"))
+                      xaxis=dict(side="top", showgrid=False, zeroline=False, autorange="reversed", fixedrange=True),
+                      yaxis=dict(autorange="reversed", showgrid=False, zeroline=False, fixedrange=True))
     yearly = piv.sum(axis=1)
     cards = [html.Div(className="year-card", children=[html.Div(str(y), className="year-k"),
                                                        html.Div(money(v), className=f"year-v {_cls(v)}")])
