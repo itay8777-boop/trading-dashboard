@@ -190,7 +190,7 @@ def _strategy_inputs_section(code: str):
     fields = []
     for item in inputs:
         name, value, type_name = item["name"], item["value"], item["type"]
-        label = name if item["recognized"] else f"{name} (לא נתמך במנוע המהיר)"
+        label = lab.param_label(name) if item["recognized"] else f"{lab.param_label(name)} (לא פעיל)"
         field_id = {"type": "strategy-input", "name": name}
         if type_name == "bool":
             control = dcc.Checklist(
@@ -200,10 +200,10 @@ def _strategy_inputs_section(code: str):
         else:
             control = dcc.Input(
                 id=field_id, type="number", value=value,
-                step=1 if type_name == "int" else 0.01,
+                step=1 if type_name == "int" else "any",
                 className="num-input tiny", debounce=True,
             )
-        fields.append(html.Div(className="settings-field", children=[
+        fields.append(html.Div(className="settings-field param-field", title=name, children=[
             html.Span(label, className="ctl-label"), control,
         ]))
     return html.Div(className="settings-grid", children=fields)
@@ -225,17 +225,23 @@ def _catalog_children():
             st = last["stats"]
             cls = "cat-result pos" if st["net"] > 0 else "cat-result neg"
             result = html.Div(className=cls, children=[
-                html.Span(f"{last['symbol']} {last['timeframe']} · {last['at']}", className="cat-result-when"),
-                html.Span(f"{_fmt_money(st['net'])} · {st['trades']} עסקאות · "
-                          f"{st['win_rate']:.0f}% זכייה · PF {st['pf']:.2f} · DD {st['max_dd_pct']:.1f}%"),
+                html.Div(f"ריצה אחרונה · {last['symbol']} {last['timeframe']} · {last['at']}", className="cat-result-when"),
+                html.Div(className="cat-stats", children=[
+                    html.Div([html.Span(_fmt_money(st["net"]), className="v"), html.Span("רווח נקי", className="k")]),
+                    html.Div([html.Span(str(st["trades"]), className="v"), html.Span("עסקאות", className="k")]),
+                    html.Div([html.Span(f"{st['win_rate']:.0f}%", className="v"), html.Span("זכייה", className="k")]),
+                    html.Div([html.Span(f"{st['pf']:.2f}", className="v"), html.Span("Profit Factor", className="k")]),
+                    html.Div([html.Span(f"{st['max_dd_pct']:.1f}%", className="v"), html.Span("Drawdown", className="k")]),
+                ]),
             ])
         else:
             result = html.Div("עדיין לא הורץ בסשן הזה", className="cat-result none")
-        params = ", ".join(f"{n}={d}" for n, _p, _c, d in eng["params"])
+        chips = [html.Span([html.Span(lab.param_label(n), className="chip-k"), html.Span(lab.fmt_value(d), className="chip-v")],
+                          className="chip", title=n) for n, _p, _c, d in eng["params"]]
         cards.append(html.Div(className="cat-card", children=[
             html.Div(eng["title"], className="cat-title"),
             html.Div(eng["desc"], className="cat-desc"),
-            html.Div(params, className="cat-params", dir="ltr"),
+            html.Div(chips, className="cat-chips"),
             result,
             html.Div(className="cat-actions", children=[
                 html.Button("טען לעורך", id={"type": "catalog-load", "key": key},
@@ -245,38 +251,46 @@ def _catalog_children():
             ]),
         ]))
     return [
-        html.Div("בחר אסטרטגיה, טען אותה לעורך, כוונן פרמטרים בלשונית Settings ולחץ Add to chart. "
-                 "\"טען והרץ\" עושה את הכל בלחיצה אחת על הטיים-פריים שנבחר למעלה.",
-                 className="settings-hint"),
+        html.Div(className="pane-head", children=[
+            html.Div("ספריית האסטרטגיות", className="pane-title"),
+            html.Div("בחר אסטרטגיה. \"טען והרץ\" מריץ אותה מיד על הסימבול והטיים-פריים שנבחרו למעלה; "
+                     "\"טען לעורך\" פותח אותה לעריכה.", className="pane-sub"),
+        ]),
         html.Div(className="cat-grid", children=cards),
     ]
 
 
+def _fld(label, control):
+    return html.Div(className="settings-field", children=[html.Span(label, className="ctl-label"), control])
+
+
 def _optimizer_children():
     return [
-        html.Div("בוחרים פרמטר אחד או שניים מהאסטרטגיה שבעורך, טווח וצעד, והמערכת מריצה את כל "
-                 "השילובים על ההיסטוריה. הדירוג לפי 70% הראשונים של הנתונים; העמודות \"מחוץ למדגם\" "
-                 "מראות את אותם פרמטרים על 30% האחרונים, כדי לא להתאהב בתוצאה שלא מחזיקה.",
-                 className="settings-hint"),
+        html.Div(className="pane-head", children=[
+            html.Div("אופטימיזציית פרמטרים", className="pane-title"),
+            html.Div("בוחרים פרמטר אחד או שניים, טווח וצעד. הדירוג לפי 70% הראשונים של ההיסטוריה; "
+                     "העמודות \"מחוץ למדגם\" מראות את אותם ערכים על 30% האחרונים, כדי לא להתאהב בתוצאה שלא מחזיקה.",
+                     className="pane-sub"),
+        ]),
         html.Div(id="opt-engine-label", className="opt-engine"),
-        html.Div(className="opt-row", children=[
-            html.Span("פרמטר 1", className="ctl-label"),
-            dcc.Dropdown(id="opt-p1", className="settings-dropdown opt-dd", clearable=False, searchable=False),
-            dcc.Input(id="opt-p1-min", type="number", placeholder="מ-", className="num-input tiny"),
-            dcc.Input(id="opt-p1-max", type="number", placeholder="עד", className="num-input tiny"),
-            dcc.Input(id="opt-p1-step", type="number", placeholder="צעד", className="num-input tiny"),
-        ]),
-        html.Div(className="opt-row", children=[
-            html.Span("פרמטר 2", className="ctl-label"),
-            dcc.Dropdown(id="opt-p2", className="settings-dropdown opt-dd", clearable=True, searchable=False,
-                         placeholder="(אופציונלי)"),
-            dcc.Input(id="opt-p2-min", type="number", placeholder="מ-", className="num-input tiny"),
-            dcc.Input(id="opt-p2-max", type="number", placeholder="עד", className="num-input tiny"),
-            dcc.Input(id="opt-p2-step", type="number", placeholder="צעד", className="num-input tiny"),
-        ]),
-        html.Div(className="opt-row", children=[
-            html.Button("▶  הרץ אופטימיזציה", id="opt-run-btn", n_clicks=0, className="run-btn"),
-            html.Span(id="opt-status", className="opt-status"),
+        html.Div(className="opt-card", children=[
+            html.Div(className="opt-row", children=[
+                _fld("פרמטר 1", dcc.Dropdown(id="opt-p1", className="settings-dropdown opt-dd", clearable=False, searchable=False)),
+                _fld("מ-", dcc.Input(id="opt-p1-min", type="number", step="any", className="num-input tiny")),
+                _fld("עד", dcc.Input(id="opt-p1-max", type="number", step="any", className="num-input tiny")),
+                _fld("צעד", dcc.Input(id="opt-p1-step", type="number", step="any", className="num-input tiny")),
+            ]),
+            html.Div(className="opt-row", children=[
+                _fld("פרמטר 2 (אופציונלי)", dcc.Dropdown(id="opt-p2", className="settings-dropdown opt-dd", clearable=True,
+                                                     searchable=False, placeholder="ללא")),
+                _fld("מ-", dcc.Input(id="opt-p2-min", type="number", step="any", className="num-input tiny")),
+                _fld("עד", dcc.Input(id="opt-p2-max", type="number", step="any", className="num-input tiny")),
+                _fld("צעד", dcc.Input(id="opt-p2-step", type="number", step="any", className="num-input tiny")),
+            ]),
+            html.Div(className="opt-row opt-run-row", children=[
+                html.Button("▶  הרץ אופטימיזציה", id="opt-run-btn", n_clicks=0, className="run-btn"),
+                html.Span(id="opt-status", className="opt-status"),
+            ]),
         ]),
         dcc.Loading(html.Div(id="opt-results", className="opt-results"), type="dot", color="#2962FF"),
         dcc.Store(id="opt-store"),
@@ -299,6 +313,7 @@ def build_layout() -> html.Div:
         dcc.Interval(id="live-interval", interval=LIVE_INTERVAL_MS, n_intervals=0),
 
         html.Div(className="topbar", children=[
+            html.Div(className="brand", children=[html.Span("Strategy", className="brand-a"), html.Span("Lab", className="brand-b")]),
             # debounce=True משדר את הערך רק ביציאה מהשדה, כך שלא רצה שאיבה על כל תו.
             # ב-Dash הזה Enter לבדו אינו מבצע commit, ולכן assets/chart.js הופך Enter
             # ל-blur — וכך הקלדת סימבול + Enter טוענת אותו, כמצופה.
@@ -402,17 +417,17 @@ def build_layout() -> html.Div:
                 html.Div(className="panel-bar", children=[
                     dcc.Tabs(id="panel-tabs", value="tester", className="panel-tabs",
                              parent_className="panel-tabs-parent", children=[
-                                 dcc.Tab(label="Strategy Tester", value="tester",
-                                         className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="Pine Editor", value="editor",
-                                         className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="Settings", value="settings",
-                                         className="ptab", selected_className="ptab-sel"),
                                  dcc.Tab(label="אסטרטגיות", value="catalog",
+                                         className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="בודק אסטרטגיות", value="tester",
+                                         className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="עורך קוד", value="editor",
                                          className="ptab", selected_className="ptab-sel"),
                                  dcc.Tab(label="אופטימיזציה", value="optimize",
                                          className="ptab", selected_className="ptab-sel"),
                                  dcc.Tab(label="היסטוריה והשוואה", value="history",
+                                         className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="הגדרות", value="settings",
                                          className="ptab", selected_className="ptab-sel"),
                              ]),
                     # חץ ספריית האסטרטגיות, ליד לשונית "Pine Editor" - כמו ב-TradingView.
@@ -432,13 +447,18 @@ def build_layout() -> html.Div:
                         # סרגל עבודה (שלב 2): פרמטרים + טווח + הרצה ליד התוצאות, בלי לעבור לשוניות.
                         html.Div(className="tester-bar", children=[
                             html.Div(className="tester-bar-row", children=[
-                                html.Button("▶  הרץ", id="tester-run-btn", n_clicks=0, className="run-btn",
-                                            title="הרצת האסטרטגיה שבעורך עם הפרמטרים שלמטה"),
-                                html.Span("טווח:", className="ctl-label"),
-                                dcc.Dropdown(id="bt-range", className="settings-dropdown bt-range-dd",
-                                             options=[{"label": l, "value": k} for k, l in lab.RANGE_OPTIONS],
-                                             value="all", clearable=False, searchable=False),
-                                html.Span(id="run-label", className="run-label"),
+                                html.Div(className="wb-head", children=[
+                                    html.Div(id="wb-title", className="wb-title"),
+                                    html.Div(id="run-label", className="run-label"),
+                                ]),
+                                html.Div(className="wb-actions", children=[
+                                    html.Span("טווח הבדיקה", className="ctl-label"),
+                                    dcc.Dropdown(id="bt-range", className="settings-dropdown bt-range-dd",
+                                                 options=[{"label": l, "value": k} for k, l in lab.RANGE_OPTIONS],
+                                                 value="all", clearable=False, searchable=False),
+                                    html.Button("▶  הרץ בדיקה", id="tester-run-btn", n_clicks=0, className="run-btn",
+                                                title="הרצת האסטרטגיה שבעורך עם הפרמטרים שלמטה"),
+                                ]),
                             ]),
                             html.Div(id="strategy-inputs-container",
                                      children=_strategy_inputs_section(DEFAULT_CODE)),
@@ -482,8 +502,7 @@ def build_layout() -> html.Div:
                         ]),
                         dcc.Loading(html.Div(id="result-body", className="result-body",
                                  children=_html(panels.empty(
-                                     "פתח את Pine Editor, כתוב אסטרטגיה ולחץ "
-                                     "\u25b6 Add to chart כדי לראות ביצועים."))),
+                                     "בחר אסטרטגיה בלשונית \"אסטרטגיות\" או לחץ \"הרץ בדיקה\" למעלה כדי לראות תוצאות."))),
                                     type="dot", color="#2962FF"),
                         # ניווט עמודים ל"List of Trades" - מוצג רק בלשונית trades וכשיש
                         # יותר מ-TRADES_PAGE_SIZE עסקאות (ראו run_or_switch/_trades_pagination_state).
@@ -497,53 +516,54 @@ def build_layout() -> html.Div:
                                                  className="trades-page-btn"),
                                  ]),
                     ]),
-                    html.Div(id="editor-pane", style={"display": "none"}, children=[
+                    html.Div(id="editor-pane", style={"display": "none"}, className="rtl-pane", children=[
                         html.Div(className="editor-row", children=[
-                            html.Div("כתוב def init(self) ו-def next(self). "
-                                     "זמינים: self.vwap (מתאפס כל יום), self.position_size, "
-                                     "sma / ema / rsi / crossover.", className="editor-hint"),
+                            html.Div("הקוד מגדיר את האסטרטגיה והפרמטרים שלה (שורות עם # input הופכות לשדות בבודק). "
+                                     "שורת # strategy: בראש הקוד קובעת איזה מנוע מובנה רץ.", className="editor-hint"),
                             html.Div(className="editor-controls", children=[
-                                html.Button("▶  Add to chart", id="run-btn", n_clicks=0,
+                                html.Button("▶  הרץ", id="run-btn", n_clicks=0,
                                             className="run-btn",
                                             title="בקטסט על כל ההיסטוריה"),
                             ]),
                         ]),
+                        html.Div("שים לב: בגרסה הנוכחית רצים רק המנועים המובנים (לפי שורת # strategy). "
+                                 "קוד חופשי בפונקציות init/next עדיין אינו מורץ; שינוי הפרמטרים כן משפיע.",
+                                 className="editor-note"),
                         dcc.Textarea(id="code-input", value=DEFAULT_CODE, className="code-area",
                                      spellCheck=False),
                         html.Div(id="run-error", className="run-error"),
                     ]),
-                    html.Div(id="settings-pane", style={"display": "none"}, children=[
+                    html.Div(id="settings-pane", style={"display": "none"}, className="rtl-pane", children=[
                         html.Div(className="settings-hint",
-                                 children="הגדרות חשבון וביצוע — משפיעות על חישוב הבקטסט "
-                                          "(PnL, סליפג' ועמלות) בלחיצה הבאה על Add to chart."),
+                                 children="הגדרות חשבון וביצוע. משפיעות על חישוב הרווח, הסליפג' והעמלות בריצה הבאה."),
                         html.Div(className="settings-grid", children=[
                             html.Div(className="settings-field", children=[
-                                html.Span("Account Value", className="ctl-label"),
+                                html.Span("הון התחלתי ($)", className="ctl-label"),
                                 dcc.Input(id="account-value-input", type="number", value=100000,
                                           min=1000, className="num-input tiny", debounce=True),
                             ]),
                             html.Div(className="settings-field", children=[
-                                html.Span("Contracts per trade", className="ctl-label"),
+                                html.Span("חוזים לעסקה", className="ctl-label"),
                                 dcc.Input(id="contracts-input", type="number", value=1, min=1,
                                           step=1, className="num-input tiny", debounce=True),
                             ]),
                             html.Div(className="settings-field", children=[
-                                html.Span("Contract multiplier", className="ctl-label"),
+                                html.Span("מכפיל חוזה", className="ctl-label"),
                                 dcc.Input(id="multiplier-input", type="number", value=2, min=0,
                                           step=0.01, className="num-input tiny", debounce=True),
                             ]),
                             html.Div(className="settings-field", children=[
-                                html.Span("Slippage (ticks)", className="ctl-label"),
+                                html.Span("סליפג' (טיקים)", className="ctl-label"),
                                 dcc.Input(id="slippage-input", type="number", value=2, min=0,
                                           step=1, className="num-input tiny", debounce=True),
                             ]),
                             html.Div(className="settings-field", children=[
-                                html.Span("Commission / contract", className="ctl-label"),
+                                html.Span("עמלה לחוזה ($)", className="ctl-label"),
                                 dcc.Input(id="settings-commission-input", type="number", value=0,
                                           min=0, step=0.01, className="num-input tiny", debounce=True),
                             ]),
                             html.Div(className="settings-field", children=[
-                                html.Span("Order type", className="ctl-label"),
+                                html.Span("סוג פקודה", className="ctl-label"),
                                 dcc.Dropdown(id="order-type-input", className="settings-dropdown",
                                              options=[{"label": "Market", "value": "Market"},
                                                       {"label": "Limit", "value": "Limit"}],
@@ -557,7 +577,7 @@ def build_layout() -> html.Div:
                         # State ומשפיעים בפועל רק על שמות מוכרים (RECOGNIZED_STRATEGY_INPUTS) -
                         # שאר השדות מוצגים לשקיפות בלבד, בלי אפקט על המנוע המהיר עדיין.
                         html.Div(className="settings-hint",
-                                 children="פרמטרי האסטרטגיה (Strategy Inputs) עברו לסרגל שבראש לשונית Strategy Tester."),
+                                 children="פרמטרי האסטרטגיה עצמה נמצאים בראש לשונית \"בודק אסטרטגיות\"."),
                     ]),
                     html.Div(id="catalog-pane", style={"display": "none"}, className="rtl-pane",
                              children=_catalog_children()),
@@ -592,7 +612,10 @@ def build_layout() -> html.Div:
 
 app = Dash(
     __name__,
-    title="Strategy Dashboard",
+    title="Strategy Lab",
+    external_stylesheets=[
+        "https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap",
+    ],
     external_scripts=[
         # גרסה מוצמדת בכוונה: גרסה צפה עלולה לקפוץ ל-major חדש ולשבור את ה-API.
         "https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"
@@ -1135,7 +1158,7 @@ def _result_body(tab: str, stats, cash: float, page: int = 0,
 def _opt_param_options(code: str):
     key = lab.engine_key_for_code(code)
     present = {it["name"] for it in parse_strategy_inputs(code or "")}
-    opts = [{"label": name, "value": name}
+    opts = [{"label": lab.param_label(name), "value": name}
             for name, _p, caster, _d in lab.engine_params(key)
             if caster is not None and name in present]
     return key, opts
@@ -1144,12 +1167,14 @@ def _opt_param_options(code: str):
 @callback(
     Output("opt-p1", "options"), Output("opt-p2", "options"),
     Output("opt-p1", "value"), Output("opt-engine-label", "children"),
+    Output("wb-title", "children"),
     Input("code-input", "value"),
 )
 def refresh_opt_params(code):
     key, opts = _opt_param_options(code)
     first = opts[0]["value"] if opts else None
-    return opts, opts, first, f"אסטרטגיה בעורך: {lab.ENGINES[key]['title']}"
+    title = lab.ENGINES[key]["title"]
+    return opts, opts, first, f"אסטרטגיה בעורך: {title}", title
 
 
 def _suggest_range(name, code):
@@ -1239,7 +1264,7 @@ def run_optimizer(n_clicks, code, symbol, timeframe, account_value, contracts, m
     rows = res["rows"]
     if not rows:
         return html.Div("לא התקבלו תוצאות.", className="run-error"), no_update, ""
-    header = [html.Th(n) for n in res["names"]] + [
+    header = [html.Th(lab.param_label(n), title=n) for n in res["names"]] + [
         html.Th("עסקאות"), html.Th("זכייה %"), html.Th("PF"), html.Th("רווח נקי"), html.Th("DD %"),
         html.Th("מחוץ למדגם: רווח"), html.Th("מחוץ למדגם: PF"), html.Th("")]
     body = []
@@ -1334,15 +1359,16 @@ def show_run_label(_):
 
 def _history_list_children():
     if not lab.RUN_HISTORY:
-        return html.Div("עדיין אין ריצות בסשן הזה. כל לחיצה על ▶ הרץ / Add to chart נרשמת כאן.",
-                        className="settings-hint")
+        return html.Div(className="empty-state", children=[
+            html.Div("עדיין אין ריצות", className="empty-title"),
+            html.Div("כל לחיצה על \"הרץ בדיקה\" או \"טען והרץ\" נרשמת כאן, ואפשר להשוות בין ריצות.", className="empty-sub")])
     header = html.Tr([html.Th("השווה"), html.Th("#"), html.Th("שעה"), html.Th("אסטרטגיה"), html.Th("סימבול"),
                       html.Th("טווח"), html.Th("עסקאות"), html.Th("זכייה %"), html.Th("PF"), html.Th("רווח נקי"),
                       html.Th("DD %"), html.Th("פרמטרים"), html.Th("")])
     rows = []
     for r in lab.RUN_HISTORY:
         q = r["q"]
-        params = ", ".join(f"{k}={v}" for k, v in r["params"].items())
+        params = " · ".join(f"{lab.param_label(k)}: {lab.fmt_value(v)}" for k, v in r["params"].items())
         rows.append(html.Tr([
             html.Td(dcc.Checklist(id={"type": "hist-sel", "index": r["id"]}, options=[{"label": "", "value": "on"}],
                                   value=[], className="hist-sel")),
@@ -1358,8 +1384,11 @@ def _history_list_children():
                                  title="מחיקה מההיסטוריה")]),
         ]))
     return [
-        html.Div("סמן עד 3 ריצות בעמודה \"השווה\" כדי לראות אותן זו לצד זו. \"טען\" מחזיר את הקוד והפרמטרים של הריצה לעורך.",
-                 className="settings-hint"),
+        html.Div(className="pane-head", children=[
+            html.Div("היסטוריית ריצות", className="pane-title"),
+            html.Div("סמן עד 3 ריצות בעמודה \"השווה\" כדי לראות אותן זו לצד זו. \"טען\" מחזיר את הקוד והפרמטרים לעורך.",
+                     className="pane-sub"),
+        ]),
         html.Div(html.Table(className="hist-table", children=[html.Thead(header), html.Tbody(rows)]),
                  className="opt-table-wrap"),
     ]
@@ -1501,7 +1530,7 @@ app.clientside_callback(
             return [window.dash_clientside.no_update, window.dash_clientside.no_update,
                     window.dash_clientside.no_update];
         }
-        return ["tester", true, "Running..."];
+        return ["tester", true, "מריץ..."];
     }
     """,
     Output("panel-tabs", "value", allow_duplicate=True),
@@ -1517,7 +1546,7 @@ app.clientside_callback(
 app.clientside_callback(
     """
     function(_children) {
-        return [false, "\\u25b6  Add to chart"];
+        return [false, "\\u25b6  הרץ"];
     }
     """,
     Output("run-btn", "disabled", allow_duplicate=True),

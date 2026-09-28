@@ -654,3 +654,203 @@ table.tv-trades tr.tv-entry-row td { color: var(--tv-muted); border-bottom: 1px 
 .cmp-col .cmp-row { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px dashed var(--border); }
 .cmp-col .cmp-row:last-child { border-bottom: 0; }
 .cmp-col .pos { color: #26A69A; } .cmp-col .neg { color: #EF5350; }
+
+/* =====================================================================
+   DESIGN REFRESH (branch ariel/strategy-lab) — שכבת עיצוב אחידה מעל הבסיס.
+   הגרף נשאר על רקע שחור (בקשת בעל הפרויקט); הכרום סביבו מקבל משטחים,
+   טיפוגרפיה (Heebo) ורכיבים אחידים: שדות, כפתורים, כרטיסים, טבלאות, לשוניות.
+   ===================================================================== */
+:root {
+    --font: "Heebo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --surface-0: #0B0D12;   /* רקע הפאנל התחתון */
+    --surface-1: #12151C;   /* כרטיסים */
+    --surface-2: #181C25;   /* שדות / שורות */
+    --line: #262B36;
+    --line-strong: #343A47;
+    --text: #E6E8EE; --muted: #8B90A0; --muted-2: #6B7080;
+    --blue: #3D7BFF; --blue-deep: #2962FF;
+    --up: #1FBF8F; --down: #F0475A;
+    --radius: 10px; --radius-sm: 7px;
+}
+body { font-family: var(--font); font-size: 13px; letter-spacing: 0; -webkit-font-smoothing: antialiased; }
+
+/* ---------- סרגל עליון ---------- */
+.topbar { background: #0E1117; border-bottom: 1px solid var(--line); padding: 7px 14px; gap: 10px; }
+.brand { display: flex; align-items: baseline; gap: 4px; margin-right: 8px; font-weight: 700; letter-spacing: .02em; font-size: 14px; user-select: none; }
+.brand-a { color: var(--text); } .brand-b { color: var(--blue); }
+.symbol-input { background: var(--surface-2); border-color: var(--line-strong); border-radius: var(--radius-sm); font-size: 14px; }
+.tf-btn { border-radius: 6px; padding: 6px 10px; }
+.tf-btn.active { background: rgba(61,123,255,.16); color: var(--blue); }
+.tf-btn:hover { background: var(--surface-2); }
+.sep { background: var(--line); }
+
+/* ---------- פאנל תחתון + לשוניות ---------- */
+.bottom-panel { background: var(--surface-0); border-top: 1px solid var(--line); }
+.panel-bar { background: #0E1117; border-bottom: 1px solid var(--line); height: 42px; direction: rtl; }
+.panel-tabs-parent, .panel-tabs { direction: rtl; }
+.panel-tabs .ptab {
+    min-width: 0 !important; padding: 0 18px !important; font-family: var(--font) !important;
+    font-size: 13px !important; font-weight: 500 !important; color: var(--muted) !important;
+    border: none !important; border-bottom: 2px solid transparent !important; background: transparent !important;
+    justify-content: center;
+}
+.panel-tabs .ptab:hover { color: var(--text) !important; background: rgba(255,255,255,.03) !important; }
+.panel-tabs .ptab-sel { color: var(--text) !important; border-bottom: 2px solid var(--blue) !important; border-top: none !important; background: transparent !important; }
+.panel-toggle { margin-left: 0; margin-right: auto; }
+.panel-body { padding: 14px 18px 22px; }
+.panel-body::-webkit-scrollbar { width: 10px; } .panel-body::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 8px; border: 2px solid var(--surface-0); }
+.strategy-lib-arrow { top: 11px !important; }
+
+/* ---------- כותרות פאנל, רמזים, מצבים ריקים ---------- */
+.pane-head { margin: 2px 0 14px; }
+.pane-title { font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+.pane-sub, .settings-hint { color: var(--muted); font-size: 12.5px; line-height: 1.6; max-width: 900px; }
+.empty-state { text-align: center; padding: 40px 16px; border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); }
+.empty-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.tv-empty { background: var(--surface-1); border: 1px dashed var(--line-strong); border-radius: var(--radius); font-family: var(--font); direction: rtl; }
+
+/* ---------- שדות ---------- */
+.ctl-label { color: var(--muted); font-size: 11.5px; font-weight: 500; }
+.num-input, .num-input.tiny, .settings-field .num-input.tiny {
+    background: var(--surface-2); border: 1px solid var(--line-strong); color: var(--text);
+    border-radius: var(--radius-sm); height: 34px; padding: 0 10px; font-family: var(--font); font-size: 13px;
+    font-variant-numeric: tabular-nums; width: 118px; transition: border-color .12s, box-shadow .12s;
+}
+.num-input:hover { border-color: #465063; }
+.num-input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(61,123,255,.18); outline: none; }
+.num-input:invalid { color: var(--text); }
+.settings-grid { gap: 12px 16px; }
+.settings-field { gap: 6px; }
+.param-field { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px 9px; min-width: 150px; }
+.param-field .ctl-label { white-space: nowrap; }
+.param-field .num-input.tiny { width: 100%; height: 30px; }
+.strategy-input-checkbox { height: 30px; }
+.strategy-input-checkbox input[type="checkbox"] { width: 18px; height: 18px; border-radius: 4px; accent-color: var(--blue); }
+
+/* dcc.Dropdown (כפתור + רשימה מקורית של Dash) בכהה, לכל הדרופדאונים */
+.dash-dropdown.settings-dropdown, .dash-dropdown.settings-dropdown:focus, .dash-dropdown.settings-dropdown:focus-visible {
+    width: auto !important; min-width: 150px; height: 34px !important; min-height: 0 !important;
+    background: var(--surface-2) !important; border: 1px solid var(--line-strong) !important;
+    border-radius: var(--radius-sm) !important; padding: 0 10px !important; outline: none !important;
+    font-family: var(--font) !important; box-shadow: none !important; cursor: pointer;
+}
+.dash-dropdown.settings-dropdown:hover { border-color: #465063 !important; }
+.settings-dropdown .dash-dropdown-grid-container { display: flex !important; align-items: center !important; gap: 8px !important; padding: 0 !important; direction: rtl; }
+.settings-dropdown .dash-dropdown-value, .settings-dropdown .dash-dropdown-value-item, .settings-dropdown .dash-dropdown-value-item span,
+.settings-dropdown .dash-dropdown-placeholder { color: var(--text) !important; font-size: 13px !important; white-space: nowrap !important; }
+.settings-dropdown .dash-dropdown-placeholder { color: var(--muted) !important; }
+.settings-dropdown .dash-dropdown-trigger-icon { color: var(--muted) !important; width: 13px !important; height: 13px !important; margin-inline-start: auto; }
+.dash-dropdown-content, .dash-dropdown-options {
+    background: #161A22 !important; border: 1px solid var(--line-strong) !important; border-radius: var(--radius-sm) !important;
+    box-shadow: 0 12px 32px rgba(0,0,0,.55) !important; padding: 4px !important; direction: rtl;
+}
+.dash-dropdown-option { background: transparent !important; color: var(--text) !important; font-family: var(--font) !important;
+    font-size: 13px !important; padding: 7px 10px !important; border-radius: 5px !important; box-shadow: none !important; }
+.dash-dropdown-option:hover { background: rgba(255,255,255,.06) !important; }
+.dash-dropdown-option.selected { background: rgba(61,123,255,.16) !important; color: var(--blue) !important; }
+.dash-options-list-option-checkbox { display: none !important; }
+.bt-range-dd { min-width: 170px !important; }
+.opt-dd { min-width: 220px !important; }
+
+/* ---------- כפתורים ---------- */
+.run-btn { background: var(--blue-deep); border-radius: var(--radius-sm); height: 34px; padding: 0 16px; font-family: var(--font); font-size: 13px; font-weight: 600; box-shadow: 0 1px 0 rgba(255,255,255,.08) inset; }
+.run-btn:hover { background: var(--blue); filter: none; }
+.cat-btn { background: var(--surface-2); border: 1px solid var(--line-strong); color: var(--text); border-radius: var(--radius-sm); height: 30px; padding: 0 12px; font-family: var(--font); font-size: 12.5px; font-weight: 500; }
+.cat-btn:hover { border-color: #566073; background: #1E2330; }
+.cat-btn.primary { background: var(--blue-deep); border-color: var(--blue-deep); color: #fff; }
+.cat-btn.primary:hover { background: var(--blue); }
+.trades-page-btn { border-radius: var(--radius-sm); font-family: var(--font); }
+
+/* ---------- סרגל העבודה (בודק אסטרטגיות) ---------- */
+.tester-bar { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px 12px; margin-bottom: 12px; }
+.tester-bar-row { justify-content: space-between; align-items: flex-start; gap: 14px; }
+.wb-head { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.wb-title { font-size: 17px; font-weight: 600; color: var(--text); }
+.tester-bar .run-label { margin-inline-start: 0; font-size: 12px; color: var(--muted); }
+.wb-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.tester-bar .settings-grid { margin-top: 12px; direction: rtl; justify-content: flex-start; }
+
+/* ---------- Key stats + טבלאות התוצאות (מבנה הקיים, טיפוגרפיה חדשה) ---------- */
+.tv-st-panel { background: var(--surface-1); border-color: var(--line); border-radius: var(--radius); }
+.tv-ks-wrap { padding: 14px 16px 16px; }
+.tv-ks-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; font-family: var(--font); }
+.tv-ks-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; font-family: var(--font); }
+.tv-ks-value { font-size: 20px; font-weight: 600; font-family: var(--font); font-variant-numeric: tabular-nums; }
+.tv-ks-unit { font-size: 10.5px; }
+.result-tabs { margin: 4px 0 12px; border-bottom-color: var(--line) !important; }
+.rtab { font-family: var(--font) !important; font-size: 13px !important; padding: 9px 0 !important; }
+.rtab-sel { border-bottom-color: var(--blue) !important; }
+table.tv-table { background: var(--surface-1); font-family: var(--font); font-size: 12.5px; }
+table.tv-table th { background: var(--surface-2); font-family: var(--font); font-size: 10.5px; letter-spacing: .06em; }
+.tv-table-wrap { border-color: var(--line); border-radius: var(--radius); }
+.tv-pos { color: var(--up) !important; } .tv-neg { color: var(--down) !important; }
+.tv-long { color: var(--up); } .tv-short { color: var(--down); }
+.perf-period-dropdown { background: var(--surface-2) !important; border-color: var(--line-strong) !important; border-radius: var(--radius-sm) !important; height: 30px !important; }
+
+/* ---------- קטלוג ---------- */
+.cat-grid { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.cat-card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 16px 14px; gap: 10px; transition: border-color .15s, transform .15s; }
+.cat-card:hover { border-color: var(--line-strong); }
+.cat-title { font-size: 15.5px; font-weight: 600; }
+.cat-desc { font-size: 12.5px; line-height: 1.6; color: var(--muted); min-height: 40px; }
+.cat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font-size: 11px; line-height: 1.3; }
+.chip-k { color: var(--muted); } .chip-v { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cat-result { border-radius: var(--radius-sm); padding: 9px 11px; gap: 6px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text); }
+.cat-result.pos { border-color: rgba(31,191,143,.35); } .cat-result.neg { border-color: rgba(240,71,90,.35); }
+.cat-result.none { border-style: dashed; color: var(--muted); font-size: 12px; text-align: center; padding: 12px; }
+.cat-result-when { color: var(--muted); font-size: 11px; }
+.cat-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.cat-stats > div { display: flex; flex-direction: column; gap: 1px; }
+.cat-stats .v { font-size: 13.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cat-stats .k { font-size: 10.5px; color: var(--muted); }
+.cat-result.pos .cat-stats > div:first-child .v { color: var(--up); } .cat-result.neg .cat-stats > div:first-child .v { color: var(--down); }
+.cat-actions { gap: 8px; margin-top: 2px; }
+
+/* ---------- אופטימיזציה ---------- */
+.opt-engine { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }
+.opt-card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px 12px; margin-bottom: 14px; }
+.opt-row { gap: 12px; margin: 0 0 10px; align-items: flex-end; }
+.opt-run-row { margin: 2px 0 0; align-items: center; }
+.opt-note { font-size: 12px; margin: 6px 0 8px; }
+.opt-table, .hist-table { background: var(--surface-1); border-radius: var(--radius); overflow: hidden; font-family: var(--font); }
+.opt-table-wrap { border: 1px solid var(--line); border-radius: var(--radius); }
+.opt-table th, .hist-table th { background: var(--surface-2); color: var(--muted); font-size: 11px; font-weight: 600; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+.opt-table td, .hist-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.opt-table tr:last-child td, .hist-table tr:last-child td { border-bottom: 0; }
+.opt-table tr.opt-best td { background: rgba(61,123,255,.10); }
+.opt-table tr.opt-best td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
+.opt-table td.pos, .hist-table td.pos, .cmp-col .pos { color: var(--up); } .opt-table td.neg, .hist-table td.neg, .cmp-col .neg { color: var(--down); }
+.hist-table td.params { font-family: var(--font); font-size: 11px; direction: rtl; text-align: right; }
+
+/* ---------- השוואה ---------- */
+.cmp-grid { gap: 12px; }
+.cmp-col { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.cmp-col .cmp-title { font-size: 14px; }
+.cmp-col .cmp-row { padding: 4px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.cmp-col .cmp-row span:last-child { font-weight: 600; }
+
+/* ---------- עורך קוד ---------- */
+.code-area { background: #0B0E14; border-color: var(--line-strong); border-radius: var(--radius); font-size: 12.5px; }
+.editor-hint { font-family: var(--font); }
+
+/* ---------- תיקוני ריענון: שדות מספר של Dash 4, תיבות סימון, כיווניות מספרים ---------- */
+.dash-input-stepper { display: none !important; }
+.dash-input-container.num-input { display: flex; align-items: center; padding: 0 !important; }
+.dash-input-container.num-input .dash-input-element {
+    flex: 1 1 auto; width: 100%; min-width: 0; height: 100%; background: transparent; border: none; color: var(--text);
+    font-family: var(--font); font-size: 13px; padding: 0 10px; outline: none; direction: ltr; text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.dash-input-container.num-input:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(61,123,255,.18); }
+/* הכלל שהסתיר את כפתורי הרדיו בדרופדאון תפס גם תיבות סימון אמיתיות - מצמצמים לדרופדאון בלבד */
+.dash-options-list-option-checkbox { display: inline-block !important; }
+.dash-dropdown-options .dash-options-list-option-checkbox { display: none !important; }
+.strategy-input-checkbox .dash-options-list-option { display: flex; align-items: center; height: 30px; cursor: pointer; }
+.strategy-input-checkbox .dash-options-list-option-checkbox { width: 20px; height: 20px; accent-color: var(--blue); cursor: pointer; margin: 0; }
+/* מספרים שליליים בתאים RTL: כיוון לפי התוכן, כך ש-"-$2,452" לא הופך ל-"$2,452-" */
+.opt-table td, .hist-table td, .cat-stats .v, .cmp-col .cmp-row span:last-child, .run-label, .opt-note, .cat-result-when { unicode-bidi: plaintext; }
+.cat-card { height: 100%; }
+.cat-actions { margin-top: auto; }
+.editor-row { direction: rtl; }
+.editor-note { background: rgba(61,123,255,.08); border: 1px solid rgba(61,123,255,.25); color: var(--text); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12.5px; margin-bottom: 10px; }

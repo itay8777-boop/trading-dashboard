@@ -14,7 +14,8 @@
     function findPineEditorTab() {
         var tabs = document.querySelectorAll(".panel-tabs .ptab");
         for (var i = 0; i < tabs.length; i++) {
-            if ((tabs[i].textContent || "").trim() === "Pine Editor") return tabs[i];
+            var lbl = (tabs[i].textContent || "").trim();
+            if (lbl === "Pine Editor" || lbl === "עורך קוד") return tabs[i];
         }
         return null;
     }
@@ -26,7 +27,8 @@
         if (!arrow || !bar || !tab) return;
         var barRect = bar.getBoundingClientRect();
         var tabRect = tab.getBoundingClientRect();
-        arrow.style.left = Math.round(tabRect.right - barRect.left - 22) + "px";
+        var rtl = getComputedStyle(bar).direction === "rtl";
+        arrow.style.left = Math.round(rtl ? (tabRect.left - barRect.left + 6) : (tabRect.right - barRect.left - 22)) + "px";
         arrow.style.top = Math.round(tabRect.top - barRect.top + (tabRect.height - 20) / 2) + "px";
     }
 

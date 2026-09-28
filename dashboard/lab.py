@@ -312,7 +312,7 @@ def compare_figure(recs: list[dict]) -> go.Figure:
         x = o["ExitTime"].to_numpy(); y = np.cumsum(o["PnL"].to_numpy(dtype=float))
         if len(x) > 1500:
             idx = np.linspace(0, len(x) - 1, 1500).astype(int); x, y = x[idx], y[idx]
-        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"#{r['id']} {r['title']} · {r['timeframe']}",
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name="\u202b" + f"{r['title']} · {r['timeframe']} · #{r['id']}" + "\u202c",
                                  line=dict(color=colors[i % len(colors)], width=1.6)))
     fig.update_layout(height=280, margin=dict(l=10, r=20, t=10, b=10), paper_bgcolor="rgba(0,0,0,0)",
                       plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#B2B5BE", size=11),
@@ -320,3 +320,34 @@ def compare_figure(recs: list[dict]) -> go.Figure:
     fig.update_xaxes(gridcolor="#2A2E37", zeroline=False)
     fig.update_yaxes(gridcolor="#2A2E37", zeroline=True, zerolinecolor="#3a3f4a", tickprefix="$")
     return fig
+
+
+# ================================================================ תוויות בעברית לפרמטרים
+# שם ה-"# input" בקוד נשאר באנגלית (הוא מזהה), אבל בממשק מציגים תווית קריאה.
+LABELS: dict[str, str] = {
+    "SMA_PERIOD": "אורך הממוצע (נרות)", "SMA_LENGTH": "אורך הממוצע (נרות)",
+    "RSI_PERIOD": "אורך RSI", "RSI_LEN": "אורך RSI",
+    "RSI_OVERSOLD": "RSI מכירת יתר", "RSI_OVERBOUGHT": "RSI קניית יתר",
+    "HAMMER_RATIO": "יחס פתיל לגוף", "STOP_LOSS_PTS": "סטופ (נקודות)", "TAKE_PROFIT_PTS": "יעד (נקודות)",
+    "SWING_BARS": "נרות לנקודת מפנה", "MIN_LEG_PTS": "רגל מינימלית (נקודות)",
+    "ENTRY_FIB": "רמת כניסה (פיבו)", "STOP_FIB": "רמת סטופ (פיבו)", "STOP_BUFFER_PTS": "מרווח סטופ (נקודות)",
+    "TARGET_EXT": "יעד (הארכת פיבו)", "RSI_CONFIRM": "אישור RSI", "RSI_LONG_MAX": "RSI מקסימלי ללונג",
+    "RSI_SHORT_MIN": "RSI מינימלי לשורט", "CANDLE_CONFIRM": "אישור נר", "EMA_TREND": "EMA למגמה (0=כבוי)",
+    "ALLOW_SHORT": "לאפשר שורט",
+    "RANGE_MINUTES": "דקות טווח פתיחה", "BUFFER_PTS": "מרווח פריצה (נקודות)", "STOP_PTS": "סטופ (נקודות)",
+    "TARGET_RR": "יחס יעד/סיכון", "MIN_RANGE_PTS": "טווח מינימלי (נקודות)", "MAX_RANGE_PTS": "טווח מקסימלי (נקודות)",
+    "LAST_ENTRY_MIN": "כניסה אחרונה (דקות מהפתיחה)",
+    "DEVIATION_PTS": "מרחק מ-VWAP (נקודות)", "RTH_ONLY": "סשן רגיל בלבד",
+}
+
+
+def param_label(name: str) -> str:
+    return LABELS.get(name, name)
+
+
+def fmt_value(v) -> str:
+    if isinstance(v, bool):
+        return "כן" if v else "לא"
+    if isinstance(v, float):
+        return f"{v:g}"
+    return str(v)
