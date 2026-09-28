@@ -23,6 +23,7 @@ from chart import _evenly_sampled_indices, build_performance_chart
 from . import lab, live, panels
 from .chart import build_history_chunk_payload, build_live_bar_payload, build_payload
 from .data import (
+    from_display_epoch,
     INITIAL_DAYS,
     TIMEFRAME_ORDER,
     DataError,
@@ -411,6 +412,8 @@ def build_layout() -> html.Div:
                                          className="ptab", selected_className="ptab-sel"),
                                  dcc.Tab(label="אופטימיזציה", value="optimize",
                                          className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="היסטוריה והשוואה", value="history",
+                                         className="ptab", selected_className="ptab-sel"),
                              ]),
                     # חץ ספריית האסטרטגיות, ליד לשונית "Pine Editor" - כמו ב-TradingView.
                     # dcc.Tab לא מאפשר להטמיע רכיב בתוך כותרת הלשונית עצמה (label הוא
@@ -426,6 +429,20 @@ def build_layout() -> html.Div:
                 ]),
                 html.Div(id="panel-body", className="panel-body", children=[
                     html.Div(id="tester-pane", children=[
+                        # סרגל עבודה (שלב 2): פרמטרים + טווח + הרצה ליד התוצאות, בלי לעבור לשוניות.
+                        html.Div(className="tester-bar", children=[
+                            html.Div(className="tester-bar-row", children=[
+                                html.Button("▶  הרץ", id="tester-run-btn", n_clicks=0, className="run-btn",
+                                            title="הרצת האסטרטגיה שבעורך עם הפרמטרים שלמטה"),
+                                html.Span("טווח:", className="ctl-label"),
+                                dcc.Dropdown(id="bt-range", className="settings-dropdown bt-range-dd",
+                                             options=[{"label": l, "value": k} for k, l in lab.RANGE_OPTIONS],
+                                             value="all", clearable=False, searchable=False),
+                                html.Span(id="run-label", className="run-label"),
+                            ]),
+                            html.Div(id="strategy-inputs-container",
+                                     children=_strategy_inputs_section(DEFAULT_CODE)),
+                        ]),
                         # dcc.Loading עוטף את שני ה-Output-ים של run_or_switch (למטה) -
                         # Dash מזהה לבד קריאת callback פעילה שמשפיעה על ילד עטוף ומציג
                         # ספינר אוטומטית. בלי זה, לחיצה על "Add to chart" לא נתנה שום
@@ -539,14 +556,15 @@ def build_layout() -> html.Div:
                         # שהמשתמש עורך כאן נקראים ב-run_or_switch דרך pattern-matching
                         # State ומשפיעים בפועל רק על שמות מוכרים (RECOGNIZED_STRATEGY_INPUTS) -
                         # שאר השדות מוצגים לשקיפות בלבד, בלי אפקט על המנוע המהיר עדיין.
-                        html.Div(className="settings-section-title", children="Strategy Inputs"),
-                        html.Div(id="strategy-inputs-container",
-                                 children=_strategy_inputs_section(DEFAULT_CODE)),
+                        html.Div(className="settings-hint",
+                                 children="פרמטרי האסטרטגיה (Strategy Inputs) עברו לסרגל שבראש לשונית Strategy Tester."),
                     ]),
                     html.Div(id="catalog-pane", style={"display": "none"}, className="rtl-pane",
                              children=_catalog_children()),
                     html.Div(id="optimize-pane", style={"display": "none"}, className="rtl-pane",
                              children=_optimizer_children()),
+                    html.Div(id="history-pane", style={"display": "none"}, className="rtl-pane",
+                             children=[html.Div(id="history-list"), html.Div(id="history-compare")]),
                 ]),
             ]),
         ]),
@@ -858,6 +876,7 @@ def toggle_panel(_n, is_open):
     Output("settings-pane", "style"),
     Output("catalog-pane", "style"),
     Output("optimize-pane", "style"),
+    Output("history-pane", "style"),
     Input("panel-tabs", "value"),
 )
 def switch_panel_tab(tab):
@@ -868,6 +887,7 @@ def switch_panel_tab(tab):
         show if tab == "settings" else hide,
         show if tab == "catalog" else hide,
         show if tab == "optimize" else hide,
+        show if tab == "history" else hide,
     )
 
 
@@ -967,13 +987,14 @@ def _key_stats_body(stats, cash: float, period: str, custom_from, custom_to):
     State({"type": "strategy-input", "name": ALL}, "value"),
     State({"type": "strategy-input", "name": ALL}, "id"),
     State("trades-page", "data"),
+    State("bt-range", "value"),
     prevent_initial_call=True,
 )
 def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_from, custom_to,
                    symbol, timeframe, _code,
                    account_value, contracts, multiplier, slippage_ticks,
                    commission_per_contract, order_type,
-                   strategy_input_values, strategy_input_ids, current_page):
+                   strategy_input_values, strategy_input_ids, current_page, bt_range="all"):
     """מריץ בקטסט על כל ההיסטוריה (run-window-store, מ-"Add to chart" - כן, למרות
     השם: לפי בקשה מפורשת "Add to chart" רץ תמיד על כל הקאש), או רק מציג תוצאות
     שכבר קיימות ב-_RESULTS["last"] אחרי החלפת לשונית-תוצאות רגילה/דפדוף בטבלת
@@ -1021,6 +1042,10 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
         if df_backtest is None:
             return (no_update, no_update, no_update, "טען נתונים קודם", no_update,
                     no_update, no_update, no_update, no_update)
+        df_backtest, range_label = lab.slice_range(df_backtest, bt_range, _window_data, from_display_epoch)
+        if df_backtest is None or len(df_backtest) < 50:
+            return (no_update, no_update, no_update, "אין מספיק נרות בטווח שנבחר", no_update,
+                    no_update, no_update, no_update, no_update)
         print(f"[backtest] source={source} (button='Add to chart') "
               f"symbol={symbol} timeframe={timeframe} "
               f"Backtest running on {len(df_backtest):,} bars from "
@@ -1038,6 +1063,10 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
             return (no_update, no_update, no_update, str(exc), no_update,
                     no_update, no_update, no_update, no_update)
         _RESULTS["last"] = (stats, cash, symbol, timeframe)
+        rec = lab.record_run(key=builtin_key, symbol=symbol, timeframe=timeframe, range_label=range_label,
+                             params=strategy_overrides, stats=stats, cash=cash)
+        _RESULTS["last_label"] = (f"ריצה #{rec['id']} · {rec['title']} · {symbol} {timeframe} · "
+                                  f"{range_label} · {len(df_backtest):,} נרות · {rec['at']}")
         _RESULTS.setdefault("by_engine", {})[builtin_key] = {
             "symbol": symbol, "timeframe": timeframe, "at": pd.Timestamp.now().strftime("%d/%m %H:%M"),
             "stats": lab.quick_stats(stats, cash), "params": dict(strategy_overrides),
@@ -1169,10 +1198,12 @@ def suggest_p2_range(name, code):
     State({"type": "strategy-input", "name": ALL}, "id"),
     State("opt-p1", "value"), State("opt-p1-min", "value"), State("opt-p1-max", "value"), State("opt-p1-step", "value"),
     State("opt-p2", "value"), State("opt-p2-min", "value"), State("opt-p2-max", "value"), State("opt-p2-step", "value"),
+    State("bt-range", "value"),
     prevent_initial_call=True,
 )
 def run_optimizer(n_clicks, code, symbol, timeframe, account_value, contracts, multiplier, slippage_ticks,
-                  commission, order_type, in_vals, in_ids, p1, p1_lo, p1_hi, p1_st, p2, p2_lo, p2_hi, p2_st):
+                  commission, order_type, in_vals, in_ids, p1, p1_lo, p1_hi, p1_st, p2, p2_lo, p2_hi, p2_st,
+                  bt_range="all"):
     if not n_clicks:
         return no_update, no_update, no_update
     symbol = (symbol or "").strip().upper()
@@ -1195,6 +1226,7 @@ def run_optimizer(n_clicks, code, symbol, timeframe, account_value, contracts, m
         df = _FRAMES.get((symbol, timeframe))
     if df is None:
         return html.Div("טען נתונים קודם (בחר סימבול וטיים-פריים למעלה).", className="run-error"), no_update, ""
+    df, range_label = lab.slice_range(df, "all" if bt_range == "chart" else bt_range, None)
     overrides = lab.code_overrides(code)
     overrides.update({
         id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
@@ -1222,7 +1254,7 @@ def run_optimizer(n_clicks, code, symbol, timeframe, account_value, contracts, m
                 html.Td(f"{b['pf']:.2f}"),
                 html.Td(html.Button("החל", id={"type": "opt-apply", "index": i}, n_clicks=0, className="cat-btn")),
             ])))
-    note = (f"{res['n_combos']} שילובים ב-{res['seconds']:.1f} שניות · {symbol} {timeframe} · "
+    note = (f"{res['n_combos']} שילובים ב-{res['seconds']:.1f} שניות · {symbol} {timeframe} · {range_label} · "
             f"במדגם {res['in_from']} עד {res['in_to']} · מחוץ למדגם {res['out_from']} עד {res['out_to']}"
             + (" · נחתך ל-400 שילובים, צמצם את הטווח" if res["truncated"] else ""))
     table = html.Table(className="opt-table", children=[html.Thead(html.Tr(header)), html.Tbody(body)])
@@ -1280,6 +1312,126 @@ def refresh_catalog(tab):
     if tab != "catalog":
         return no_update
     return _catalog_children()
+
+
+
+# ---------------------------------------------------------------- שלב 2: סרגל עבודה + היסטוריה
+@callback(
+    Output("run-btn", "n_clicks", allow_duplicate=True),
+    Input("tester-run-btn", "n_clicks"), State("run-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def tester_run(n, run_n):
+    if not n:
+        return no_update
+    return (run_n or 0) + 1
+
+
+@callback(Output("run-label", "children"), Input("key-stats", "children"), prevent_initial_call=True)
+def show_run_label(_):
+    return _RESULTS.get("last_label", "")
+
+
+def _history_list_children():
+    if not lab.RUN_HISTORY:
+        return html.Div("עדיין אין ריצות בסשן הזה. כל לחיצה על ▶ הרץ / Add to chart נרשמת כאן.",
+                        className="settings-hint")
+    header = html.Tr([html.Th("השווה"), html.Th("#"), html.Th("שעה"), html.Th("אסטרטגיה"), html.Th("סימבול"),
+                      html.Th("טווח"), html.Th("עסקאות"), html.Th("זכייה %"), html.Th("PF"), html.Th("רווח נקי"),
+                      html.Th("DD %"), html.Th("פרמטרים"), html.Th("")])
+    rows = []
+    for r in lab.RUN_HISTORY:
+        q = r["q"]
+        params = ", ".join(f"{k}={v}" for k, v in r["params"].items())
+        rows.append(html.Tr([
+            html.Td(dcc.Checklist(id={"type": "hist-sel", "index": r["id"]}, options=[{"label": "", "value": "on"}],
+                                  value=[], className="hist-sel")),
+            html.Td(f"#{r['id']}"), html.Td(r["at"]), html.Td(r["title"]),
+            html.Td(f"{r['symbol']} {r['timeframe']}"), html.Td(r["range"]),
+            html.Td(q["trades"]), html.Td(f"{q['win_rate']:.0f}"), html.Td(f"{q['pf']:.2f}"),
+            html.Td(_fmt_money(q["net"]), className=("pos" if q["net"] > 0 else "neg")),
+            html.Td(f"{q['max_dd_pct']:.1f}"),
+            html.Td(params, className="params", title=params),
+            html.Td([html.Button("טען", id={"type": "hist-load", "index": r["id"]}, n_clicks=0, className="cat-btn"),
+                     " ",
+                     html.Button("✕", id={"type": "hist-del", "index": r["id"]}, n_clicks=0, className="cat-btn",
+                                 title="מחיקה מההיסטוריה")]),
+        ]))
+    return [
+        html.Div("סמן עד 3 ריצות בעמודה \"השווה\" כדי לראות אותן זו לצד זו. \"טען\" מחזיר את הקוד והפרמטרים של הריצה לעורך.",
+                 className="settings-hint"),
+        html.Div(html.Table(className="hist-table", children=[html.Thead(header), html.Tbody(rows)]),
+                 className="opt-table-wrap"),
+    ]
+
+
+@callback(
+    Output("history-list", "children"),
+    Input("panel-tabs", "value"), Input("key-stats", "children"),
+    Input({"type": "hist-del", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def refresh_history(tab, _stats, del_clicks):
+    trig = callback_context.triggered_id
+    if isinstance(trig, dict) and trig.get("type") == "hist-del":
+        if any(n for n in del_clicks if n):
+            lab.delete_run(trig.get("index"))
+        return _history_list_children()
+    if tab != "history" and trig == "panel-tabs":
+        return no_update
+    return _history_list_children()
+
+
+@callback(
+    Output("history-compare", "children"),
+    Input({"type": "hist-sel", "index": ALL}, "value"),
+    State({"type": "hist-sel", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def compare_runs(values, ids):
+    chosen = [i["index"] for v, i in zip(values, ids) if v]
+    recs = [lab.get_run(rid) for rid in chosen[:3]]
+    recs = [r for r in recs if r]
+    if not recs:
+        return ""
+    metrics = [("רווח נקי", lambda r: _fmt_money(r["q"]["net"]), lambda r: r["q"]["net"]),
+               ("תשואה %", lambda r: f"{r['q']['ret_pct']:.1f}%", lambda r: r["q"]["ret_pct"]),
+               ("קנה והחזק %", lambda r: f"{r['bh']:.1f}%", None),
+               ("עסקאות", lambda r: str(r["q"]["trades"]), None),
+               ("זכייה %", lambda r: f"{r['q']['win_rate']:.0f}%", None),
+               ("Profit Factor", lambda r: f"{r['q']['pf']:.2f}", None),
+               ("Drawdown מקסימלי", lambda r: f"{r['q']['max_dd_pct']:.1f}%", None),
+               ("רווח ממוצע לעסקה", lambda r: _fmt_money(r["q"]["avg_trade"]), lambda r: r["q"]["avg_trade"])]
+    cols = []
+    for r in recs:
+        rows = [html.Div(className="cmp-row", children=[
+            html.Span(label), html.Span(fmt(r), className=("" if sign is None else ("pos" if sign(r) > 0 else "neg")))])
+            for label, fmt, sign in metrics]
+        cols.append(html.Div(className="cmp-col", children=[
+            html.Div(f"#{r['id']} {r['title']}", className="cmp-title"),
+            html.Div(f"{r['symbol']} {r['timeframe']} · {r['range']} · {r['at']}", className="cat-result-when"),
+        ] + rows))
+    fig = lab.compare_figure(recs)
+    has_curves = any(r.get("trades") is not None for r in recs)
+    return [html.Div(className="cmp-grid", children=cols),
+            dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "280px"}) if has_curves
+            else html.Div("עקומת ההון נשמרת רק ל-12 הריצות האחרונות.", className="settings-hint")]
+
+
+@callback(
+    Output("code-input", "value", allow_duplicate=True),
+    Output("panel-tabs", "value", allow_duplicate=True),
+    Input({"type": "hist-load", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def load_from_history(n_clicks_list):
+    trig = callback_context.triggered_id
+    if not isinstance(trig, dict) or not any(n for n in n_clicks_list if n):
+        return no_update, no_update
+    rec = lab.get_run(trig.get("index"))
+    if not rec:
+        return no_update, no_update
+    return lab.run_code(rec), "tester"
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)

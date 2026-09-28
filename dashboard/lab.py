@@ -226,3 +226,97 @@ def optimize(key: str, df: pd.DataFrame, common: dict, base_overrides: dict,
             "in_to": str(df_in.index[-1])[:10] if len(df_in) else "",
             "out_from": str(df_out.index[0])[:10] if len(df_out) else "",
             "out_to": str(df_out.index[-1])[:10] if len(df_out) else ""}
+
+
+# ================================================================ שלב 2: טווח, היסטוריה, השוואה
+from collections import deque
+import itertools as _it
+
+import plotly.graph_objects as go
+
+RANGE_OPTIONS = [
+    ("all", "כל ההיסטוריה"), ("1y", "שנה אחרונה"), ("6m", "6 חודשים"),
+    ("3m", "3 חודשים"), ("1m", "חודש אחרון"), ("chart", "הטווח שבגרף"),
+]
+_RANGE_DAYS = {"1y": 365, "6m": 182, "3m": 91, "1m": 30}
+
+
+def slice_range(df: pd.DataFrame, bt_range: str | None, window: dict | None,
+                epoch_to_source=None) -> tuple[pd.DataFrame, str]:
+    """חותך את ההיסטוריה לטווח שנבחר בסרגל הבקטסט. 'chart' = הטווח הנראה כרגע
+    בגרף (window: {from,to} epochs במוסכמת התצוגה, מומרים עם epoch_to_source).
+    מחזיר (df, תווית קריאה)."""
+    if df is None or not len(df):
+        return df, ""
+    key = bt_range or "all"
+    if key == "chart" and window and window.get("from") and window.get("to") and epoch_to_source:
+        try:
+            lo = epoch_to_source(int(window["from"]))
+            hi = epoch_to_source(int(window["to"]))
+            out = df[(df.index >= lo) & (df.index <= hi)]
+            if len(out) > 10:
+                return out, f"הטווח שבגרף ({lo:%d/%m/%y}–{hi:%d/%m/%y})"
+        except Exception:
+            pass
+        key = "all"
+    if key in _RANGE_DAYS:
+        cutoff = df.index[-1] - pd.Timedelta(days=_RANGE_DAYS[key])
+        return df[df.index >= cutoff], dict(RANGE_OPTIONS)[key]
+    return df, "כל ההיסטוריה"
+
+
+RUN_HISTORY: deque = deque(maxlen=40)
+_run_ids = _it.count(1)
+_KEEP_TRADES = 12   # רק הריצות האחרונות שומרות את טבלת העסקאות (לעקומת ההשוואה)
+
+
+def record_run(*, key: str, symbol: str, timeframe: str, range_label: str,
+               params: dict, stats: dict, cash: float) -> dict:
+    rec = {
+        "id": next(_run_ids), "at": pd.Timestamp.now().strftime("%d/%m %H:%M:%S"),
+        "key": key, "title": ENGINES[key]["title"], "symbol": symbol, "timeframe": timeframe,
+        "range": range_label, "params": {k: v for k, v in params.items() if k in {n for n, *_ in ENGINES[key]["params"]}},
+        "cash": cash, "q": quick_stats(stats, cash),
+        "bh": float(stats.get("Buy & Hold Return [%]", 0.0)),
+        "trades": stats["_trades"][["ExitTime", "PnL"]].copy(),
+    }
+    RUN_HISTORY.appendleft(rec)
+    for old in list(RUN_HISTORY)[_KEEP_TRADES:]:
+        old["trades"] = None
+    return rec
+
+
+def get_run(rid: int):
+    return next((r for r in RUN_HISTORY if r["id"] == rid), None)
+
+
+def delete_run(rid: int):
+    for r in list(RUN_HISTORY):
+        if r["id"] == rid:
+            RUN_HISTORY.remove(r)
+
+
+def run_code(rec: dict) -> str:
+    """קוד האסטרטגיה של ריצה מההיסטוריה, עם הפרמטרים שלה כתובים בשורות ה-# input."""
+    return apply_inputs_to_code(ENGINES[rec["key"]]["code"], rec["params"])
+
+
+def compare_figure(recs: list[dict]) -> go.Figure:
+    fig = go.Figure()
+    colors = ["#2962FF", "#26A69A", "#FF9800", "#EF5350"]
+    for i, r in enumerate(recs):
+        tr = r.get("trades")
+        if tr is None or tr.empty:
+            continue
+        o = tr.sort_values("ExitTime")
+        x = o["ExitTime"].to_numpy(); y = np.cumsum(o["PnL"].to_numpy(dtype=float))
+        if len(x) > 1500:
+            idx = np.linspace(0, len(x) - 1, 1500).astype(int); x, y = x[idx], y[idx]
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"#{r['id']} {r['title']} · {r['timeframe']}",
+                                 line=dict(color=colors[i % len(colors)], width=1.6)))
+    fig.update_layout(height=280, margin=dict(l=10, r=20, t=10, b=10), paper_bgcolor="rgba(0,0,0,0)",
+                      plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#B2B5BE", size=11),
+                      legend=dict(orientation="h", y=1.08, x=0), hovermode="x unified")
+    fig.update_xaxes(gridcolor="#2A2E37", zeroline=False)
+    fig.update_yaxes(gridcolor="#2A2E37", zeroline=True, zerolinecolor="#3a3f4a", tickprefix="$")
+    return fig

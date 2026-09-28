@@ -634,3 +634,23 @@ table.tv-trades tr.tv-entry-row td { color: var(--tv-muted); border-bottom: 1px 
 .opt-table tr.opt-best td { background: rgba(41,98,255,.12); }
 .opt-table td.pos { color: #26A69A; } .opt-table td.neg { color: #EF5350; }
 .opt-table tr:hover td { background: rgba(255,255,255,.03); }
+
+/* ================= שלב 2: סרגל עבודה בטסטר + היסטוריה/השוואה ================= */
+.tester-bar { direction: rtl; text-align: right; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.tester-bar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tester-bar .run-label { color: var(--muted); font-size: 12px; margin-inline-start: auto; }
+.tester-bar .settings-grid { margin-top: 6px; direction: ltr; }
+.tester-bar .settings-hint { margin: 0; }
+.bt-range-dd { width: 170px; }
+.hist-table { border-collapse: collapse; width: 100%; font-size: 12px; direction: rtl; }
+.hist-table th, .hist-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: center; white-space: nowrap; }
+.hist-table th { color: var(--muted); font-weight: 500; font-size: 11px; }
+.hist-table td.pos { color: #26A69A; } .hist-table td.neg { color: #EF5350; }
+.hist-table td.params { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--muted); direction: ltr; text-align: left; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+.hist-sel .strategy-input-checkbox, .hist-sel input { margin: 0; }
+.cmp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0; }
+.cmp-col { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 12px; }
+.cmp-col .cmp-title { font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.cmp-col .cmp-row { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px dashed var(--border); }
+.cmp-col .cmp-row:last-child { border-bottom: 0; }
+.cmp-col .pos { color: #26A69A; } .cmp-col .neg { color: #EF5350; }
