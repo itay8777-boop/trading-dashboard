@@ -913,3 +913,43 @@ table.tv-table th { background: var(--surface-2); font-family: var(--font); font
 .param-field .ctl-he { color: var(--muted); font-size: 11px; }
 .param-field { min-width: 172px; }
 .chip-k { direction: ltr; unicode-bidi: isolate; }
+
+/* ================= פריסה זו-לצד-זו (אפיון 29/09): פאנל אסטרטגיה מימין, גרף משמאל ================= */
+.workspace { display: grid; grid-template-columns: var(--lab-w, 46%) 6px minmax(0, 1fr); grid-template-rows: 100%; height: calc(100vh - 47px); direction: rtl; }
+.workspace > .bottom-panel { height: auto !important; min-height: 0; border-top: 0; border-inline-start: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.workspace > .chart-pane { direction: ltr; min-width: 0; }
+.col-resizer { cursor: col-resize; background: transparent; position: relative; z-index: 3; }
+.col-resizer::after { content: ""; position: absolute; inset: 0 2px; background: var(--line); }
+.col-resizer:hover::after, .col-resizer:active::after { background: var(--blue); }
+.workspace.collapsed { grid-template-columns: 46px 6px minmax(0, 1fr); }
+.workspace.collapsed .panel-body, .workspace.collapsed .panel-tabs-parent, .workspace.collapsed .lab-head { display: none !important; }
+.workspace.collapsed .panel-bar { justify-content: center; }
+.panel-resizer { display: none; }
+.lab-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #0E1117; }
+.strategy-dd { min-width: 260px !important; flex: 1 1 auto; }
+.strategy-dd .dash-dropdown-value-item span { font-weight: 600 !important; }
+.lab-head-result { font-size: 12px; color: var(--muted); white-space: nowrap; unicode-bidi: plaintext; }
+.lab-head-result .pos { color: var(--up); font-weight: 600; } .lab-head-result .neg { color: var(--down); font-weight: 600; }
+.panel-bar { height: 40px; }
+.panel-tabs .ptab { padding: 0 14px !important; }
+.panel-tabs .ptab-more { color: var(--muted-2) !important; }
+.panel-body { padding: 12px 14px 20px; }
+.kpi-grid { grid-template-columns: repeat(4, 1fr); }
+@media (min-width: 1500px) { .kpi-grid { grid-template-columns: repeat(4, 1fr); } }
+.tester-bar .settings-grid { gap: 8px 10px; }
+.param-field { min-width: 150px; flex: 1 1 150px; position: relative; }
+.param-field.dirty::after { content: ""; position: absolute; top: 8px; inset-inline-start: 8px; width: 7px; height: 7px; border-radius: 50%; background: #F0A030; box-shadow: 0 0 0 3px rgba(240,160,48,.18); }
+.auto-run { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.auto-run .strategy-input-checkbox { height: auto; }
+.cat-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.split-row { grid-template-columns: repeat(3, 1fr); }
+.more-pane .result-tabs { margin-top: 0; }
+@media (max-width: 1200px) {
+    .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 42%) 6px minmax(0, 1fr); }
+    .workspace > .chart-pane { order: -1; }
+    .workspace > .bottom-panel { border-inline-start: 0; border-top: 1px solid var(--line); }
+    .col-resizer { cursor: row-resize; }
+    .workspace.collapsed { grid-template-rows: 1fr 6px 40px; }
+}
+.param-field { flex: 1 1 150px; max-width: 230px; }
+.strategy-lib-arrow { top: auto !important; }

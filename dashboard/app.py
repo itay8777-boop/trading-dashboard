@@ -368,88 +368,26 @@ def build_layout() -> html.Div:
         ]),
 
         html.Div(id="workspace", className="workspace", children=[
-            html.Div(className="chart-pane", children=[
-                html.Div(id="chart-container"),
-                # הספירה-לאחור בפועל היא countdownEl שנוצר דינמית ב-chart.js
-                # (ensureChart), לא div סטטי כאן.
-
-                # מוצג ב-JS (assets/chart.js: requestMarkersWindow) כשיש בטווח
-                # הנראה יותר עסקאות מ-MAX_VISIBLE_MARKER_TRADES - ראו /api/markers.
-                html.Div(id="marker-note", className="marker-note", style={"display": "none"}),
-
-                html.Div(id="goto-modal-overlay", className="goto-modal-overlay", children=[
-                    html.Div(id="goto-modal", className="goto-modal", children=[
-                        html.Div(className="goto-modal-header", children=[
-                            html.Span("Go to", className="goto-modal-title"),
-                            html.Button("✕", id="goto-close", className="goto-modal-close"),
-                        ]),
-                        html.Div(className="goto-tabs", children=[
-                            html.Button("Date", id="goto-tab-date", className="goto-tab goto-tab-active"),
-                            html.Button("Custom range", id="goto-tab-range", className="goto-tab"),
-                        ]),
-                        html.Div(id="goto-pane-date", className="goto-pane", children=[
-                            html.Div(className="goto-row", children=[
-                                dcc.Input(id="goto-date", type="date", className="goto-date-input"),
-                                dcc.Input(id="goto-time", type="time", value="00:00", className="goto-time-input"),
-                            ]),
-                        ]),
-                        html.Div(id="goto-pane-range", className="goto-pane", style={"display": "none"}, children=[
-                            html.Div(className="goto-row", children=[
-                                dcc.Input(id="goto-range-from-date", type="date", className="goto-date-input"),
-                                dcc.Input(id="goto-range-from-time", type="time", value="00:00", className="goto-time-input"),
-                            ]),
-                            html.Div(className="goto-row", children=[
-                                dcc.Input(id="goto-range-to-date", type="date", className="goto-date-input"),
-                                dcc.Input(id="goto-range-to-time", type="time", value="00:00", className="goto-time-input"),
-                            ]),
-                        ]),
-                        html.Div(className="goto-modal-footer", children=[
-                            html.Button("Cancel", id="goto-cancel", className="goto-cancel-btn"),
-                            html.Button("Go to", id="goto-submit", className="goto-submit-btn"),
-                        ]),
-                    ]),
-                ]),
-            ]),
-
-            # סרגל תחתון מתחת לציר הזמן של הגרף - כמו ב-TradingView: שורה קבועה
-            # (לא absolute מעל הגרף כמו קודם) עם כפתורי "Go to"/"חזרה לעכשיו"
-            # בזרימה רגילה. שניהם עדיין מזוהים לפי אותם id-ים (goto-btn/
-            # reset-live-btn) - assets/chart.js מוצא אותם לפי id ולא לפי מיקום
-            # ב-DOM, אז שום לוגיקת JS לא צריכה להשתנות בעקבות ההעברה.
-            html.Div(className="chart-bottom-toolbar", children=[
-                html.Button(
-                    html.Img(src="/assets/goto.svg", className="goto-btn-icon"),
-                    id="goto-btn", className="goto-btn", title="Go to date",
-                ),
-                # מוצג רק כשגללו הרחק מהקצה החי (assets/chart.js:
-                # updateResetLiveVisibility, לפי timeScale().scrollPosition());
-                # בלחיצה - scrollToRealTime().
-                html.Button("⏭", id="reset-live-btn", className="reset-live-btn",
-                            title="Back to live", style={"display": "none"}),
-                # שעון בזמן אמת בשעון ישראל (Asia/Jerusalem) - עם קיץ/חורף אוטומטי
-                # דרך Intl בדפדפן (assets/clock.js), לא offset קבוע (UTC+2 בחורף,
-                # UTC+3 בקיץ - קבוע היה מראה שעה שגויה חצי מהשנה).
-                html.Div(id="market-clock", className="market-clock"),
-            ]),
-
             html.Div(className="bottom-panel", children=[
+            html.Div(className="lab-head", children=[
+                dcc.Dropdown(id="strategy-select", className="settings-dropdown strategy-dd", clearable=False, searchable=False,
+                             options=[{"label": eng["title"], "value": key} for key, eng in lab.ENGINES.items()],
+                             value="sma_cross"),
+                html.Span(id="lab-head-result", className="lab-head-result"),
+            ]),
                 html.Div(className="panel-bar", children=[
-                    dcc.Tabs(id="panel-tabs", value="tester", className="panel-tabs",
+                    dcc.Tabs(id="panel-tabs", value="tester", className="panel-tabs", persistence=True,
                              parent_className="panel-tabs-parent", children=[
-                                 dcc.Tab(label="אסטרטגיות", value="catalog",
+                                 dcc.Tab(label="בדיקה", value="tester",
                                          className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="בודק אסטרטגיות", value="tester",
+                                 dcc.Tab(label="עמידות", value="optimize",
                                          className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="עורך קוד", value="editor",
+                                 dcc.Tab(label="נייר", value="paper",
                                          className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="אופטימיזציה", value="optimize",
+                                 dcc.Tab(label="היסטוריה", value="history",
                                          className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="היסטוריה והשוואה", value="history",
-                                         className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="מסחר בנייר", value="paper",
-                                         className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="הגדרות", value="settings",
-                                         className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="עוד", value="more",
+                                         className="ptab ptab-more", selected_className="ptab-sel"),
                              ]),
                     # חץ ספריית האסטרטגיות, ליד לשונית "Pine Editor" - כמו ב-TradingView.
                     # dcc.Tab לא מאפשר להטמיע רכיב בתוך כותרת הלשונית עצמה (label הוא
@@ -474,11 +412,16 @@ def build_layout() -> html.Div:
                                 ]),
                                 html.Div(className="wb-actions", children=[
                                     html.Span("טווח הבדיקה", className="ctl-label"),
-                                    dcc.Dropdown(id="bt-range", className="settings-dropdown bt-range-dd",
+                                    dcc.Dropdown(id="bt-range", className="settings-dropdown bt-range-dd", persistence=True,
                                                  options=[{"label": l, "value": k} for k, l in lab.RANGE_OPTIONS],
                                                  value="all", clearable=False, searchable=False),
                                     html.Button("▶  הרץ בדיקה", id="tester-run-btn", n_clicks=0, className="run-btn",
                                                 title="הרצת האסטרטגיה שבעורך עם הפרמטרים שלמטה"),
+                                    html.Label(className="auto-run", title="מריץ מחדש בכל שינוי פרמטר (לא על נרות דקה)", children=[
+                                        dcc.Checklist(id="auto-run", options=[{"label": "", "value": "on"}], value=[], persistence=True,
+                                                      className="strategy-input-checkbox"),
+                                        html.Span("הרצה אוטומטית"),
+                                    ]),
                                 ]),
                             ]),
                             html.Div(id="strategy-inputs-container",
@@ -555,7 +498,7 @@ def build_layout() -> html.Div:
                         html.Div("שים לב: בגרסה הנוכחית רצים רק המנועים המובנים (לפי שורת # strategy). "
                                  "קוד חופשי בפונקציות init/next עדיין אינו מורץ; שינוי הפרמטרים כן משפיע.",
                                  className="editor-note"),
-                        dcc.Textarea(id="code-input", value=DEFAULT_CODE, className="code-area",
+                        dcc.Textarea(id="code-input", value=DEFAULT_CODE, className="code-area", persistence=True, persistence_type="local",
                                      spellCheck=False),
                         html.Div(id="run-error", className="run-error"),
                     ]),
@@ -605,6 +548,13 @@ def build_layout() -> html.Div:
                         html.Div(className="settings-hint",
                                  children="פרמטרי האסטרטגיה עצמה נמצאים בראש לשונית \"בודק אסטרטגיות\"."),
                     ]),
+                    html.Div(id="more-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        dcc.Tabs(id="more-tabs", value="catalog", className="result-tabs", children=[
+                            dcc.Tab(label="ספריית אסטרטגיות", value="catalog", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="קוד", value="editor", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="הגדרות חשבון", value="settings", className="rtab", selected_className="rtab-sel"),
+                        ]),
+                    ]),
                     html.Div(id="catalog-pane", style={"display": "none"}, className="rtl-pane",
                              children=_catalog_children()),
                     html.Div(id="optimize-pane", style={"display": "none"}, className="rtl-pane",
@@ -630,6 +580,70 @@ def build_layout() -> html.Div:
                         html.Div(id="paper-body"),
                     ]),
                 ]),
+            ]),
+            html.Div(id="col-resizer", className="col-resizer", title="גרור לשינוי רוחב · לחיצה כפולה לכיווץ הפאנל"),
+            html.Div(className="chart-pane", children=[
+                html.Div(id="chart-container"),
+                # הספירה-לאחור בפועל היא countdownEl שנוצר דינמית ב-chart.js
+                # (ensureChart), לא div סטטי כאן.
+
+                # מוצג ב-JS (assets/chart.js: requestMarkersWindow) כשיש בטווח
+                # הנראה יותר עסקאות מ-MAX_VISIBLE_MARKER_TRADES - ראו /api/markers.
+                html.Div(id="marker-note", className="marker-note", style={"display": "none"}),
+
+                html.Div(id="goto-modal-overlay", className="goto-modal-overlay", children=[
+                    html.Div(id="goto-modal", className="goto-modal", children=[
+                        html.Div(className="goto-modal-header", children=[
+                            html.Span("Go to", className="goto-modal-title"),
+                            html.Button("✕", id="goto-close", className="goto-modal-close"),
+                        ]),
+                        html.Div(className="goto-tabs", children=[
+                            html.Button("Date", id="goto-tab-date", className="goto-tab goto-tab-active"),
+                            html.Button("Custom range", id="goto-tab-range", className="goto-tab"),
+                        ]),
+                        html.Div(id="goto-pane-date", className="goto-pane", children=[
+                            html.Div(className="goto-row", children=[
+                                dcc.Input(id="goto-date", type="date", className="goto-date-input"),
+                                dcc.Input(id="goto-time", type="time", value="00:00", className="goto-time-input"),
+                            ]),
+                        ]),
+                        html.Div(id="goto-pane-range", className="goto-pane", style={"display": "none"}, children=[
+                            html.Div(className="goto-row", children=[
+                                dcc.Input(id="goto-range-from-date", type="date", className="goto-date-input"),
+                                dcc.Input(id="goto-range-from-time", type="time", value="00:00", className="goto-time-input"),
+                            ]),
+                            html.Div(className="goto-row", children=[
+                                dcc.Input(id="goto-range-to-date", type="date", className="goto-date-input"),
+                                dcc.Input(id="goto-range-to-time", type="time", value="00:00", className="goto-time-input"),
+                            ]),
+                        ]),
+                        html.Div(className="goto-modal-footer", children=[
+                            html.Button("Cancel", id="goto-cancel", className="goto-cancel-btn"),
+                            html.Button("Go to", id="goto-submit", className="goto-submit-btn"),
+                        ]),
+                    ]),
+                ]),
+            ]),
+
+            # סרגל תחתון מתחת לציר הזמן של הגרף - כמו ב-TradingView: שורה קבועה
+            # (לא absolute מעל הגרף כמו קודם) עם כפתורי "Go to"/"חזרה לעכשיו"
+            # בזרימה רגילה. שניהם עדיין מזוהים לפי אותם id-ים (goto-btn/
+            # reset-live-btn) - assets/chart.js מוצא אותם לפי id ולא לפי מיקום
+            # ב-DOM, אז שום לוגיקת JS לא צריכה להשתנות בעקבות ההעברה.
+            html.Div(className="chart-bottom-toolbar", children=[
+                html.Button(
+                    html.Img(src="/assets/goto.svg", className="goto-btn-icon"),
+                    id="goto-btn", className="goto-btn", title="Go to date",
+                ),
+                # מוצג רק כשגללו הרחק מהקצה החי (assets/chart.js:
+                # updateResetLiveVisibility, לפי timeScale().scrollPosition());
+                # בלחיצה - scrollToRealTime().
+                html.Button("⏭", id="reset-live-btn", className="reset-live-btn",
+                            title="Back to live", style={"display": "none"}),
+                # שעון בזמן אמת בשעון ישראל (Asia/Jerusalem) - עם קיץ/חורף אוטומטי
+                # דרך Intl בדפדפן (assets/clock.js), לא offset קבוע (UTC+2 בחורף,
+                # UTC+3 בקיץ - קבוע היה מראה שעה שגויה חצי מהשנה).
+                html.Div(id="market-clock", className="market-clock"),
             ]),
         ]),
 
@@ -952,18 +966,21 @@ def toggle_panel(_n, is_open):
     Output("optimize-pane", "style"),
     Output("history-pane", "style"),
     Output("paper-pane", "style"),
-    Input("panel-tabs", "value"),
+    Output("more-pane", "style"),
+    Input("panel-tabs", "value"), Input("more-tabs", "value"),
 )
-def switch_panel_tab(tab):
+def switch_panel_tab(tab, more):
     show, hide = {"display": "block"}, {"display": "none"}
+    in_more = tab == "more"
     return (
         show if tab == "tester" else hide,
-        show if tab == "editor" else hide,
-        show if tab == "settings" else hide,
-        show if tab == "catalog" else hide,
+        show if (in_more and more == "editor") else hide,
+        show if (in_more and more == "settings") else hide,
+        show if (in_more and more == "catalog") else hide,
         show if tab == "optimize" else hide,
         show if tab == "history" else hide,
         show if tab == "paper" else hide,
+        show if in_more else hide,
     )
 
 
@@ -1208,13 +1225,14 @@ def _opt_param_options(code: str):
     Output("opt-p1", "options"), Output("opt-p2", "options"),
     Output("opt-p1", "value"), Output("opt-engine-label", "children"),
     Output("wb-title", "children"), Output("paper-strategy-label", "children"),
+    Output("strategy-select", "value"),
     Input("code-input", "value"),
 )
 def refresh_opt_params(code):
     key, opts = _opt_param_options(code)
     first = opts[0]["value"] if opts else None
     title = lab.ENGINES[key]["title"]
-    return opts, opts, first, f"אסטרטגיה בעורך: {title}", title, f"אסטרטגיה: {title}"
+    return opts, opts, first, f"אסטרטגיה בעורך: {title}", title, f"אסטרטגיה: {title}", key
 
 
 def _suggest_range(name, code):
@@ -1374,7 +1392,7 @@ def catalog_action(load_clicks, run_clicks, run_n):
     prevent_initial_call=True,
 )
 def refresh_catalog(tab):
-    if tab != "catalog":
+    if tab != "more":
         return no_update
     return _catalog_children()
 
@@ -1659,6 +1677,38 @@ def _paper_body():
             html.Div("יומן", className="paper-log-title"), log,
         ]))
     return html.Div(cards)
+
+
+@callback(
+    Output("code-input", "value", allow_duplicate=True),
+    Output("panel-tabs", "value", allow_duplicate=True),
+    Input("strategy-select", "value"), State("code-input", "value"),
+    prevent_initial_call=True,
+)
+def strategy_selected(key, code):
+    """בחירה בבורר בראש הפאנל טוענת את האסטרטגיה מיד. אם הקוד כבר של אותה
+    אסטרטגיה (הבורר סונכרן מהקוד) - לא נוגעים, כדי לא לדרוס פרמטרים שנערכו."""
+    if not key or key not in lab.ENGINES or lab.engine_key_for_code(code) == key:
+        return no_update, no_update
+    return lab.ENGINES[key]["code"], "tester"
+
+
+@callback(Output("lab-head-result", "children"), Output("strategy-select", "options"),
+          Input("key-stats", "children"), Input("code-input", "value"), prevent_initial_call=True)
+def refresh_lab_head(_stats, code):
+    by = _RESULTS.get("by_engine", {})
+    opts = []
+    for key, eng in lab.ENGINES.items():
+        last = by.get(key)
+        tag = f"  ·  {_fmt_money(last['stats']['net'])}" if last else ""
+        opts.append({"label": "\u200f" + eng["title"] + tag, "value": key})
+    key = lab.engine_key_for_code(code)
+    last = by.get(key)
+    if not last:
+        return "עדיין לא הורץ", opts
+    st = last["stats"]
+    return html.Span([html.Span(_fmt_money(st["net"]), className=("pos" if st["net"] > 0 else "neg")),
+                      html.Span(f" · {st['trades']} עסקאות · PF {st['pf']:.2f}", className="muted")]), opts
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)

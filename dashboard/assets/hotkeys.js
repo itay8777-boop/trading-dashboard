@@ -22,4 +22,27 @@
         if (el && el.blur) el.blur();
         runNow();
     }, true);
+
+    /* נקודה כתומה על שדה ששונה ועדיין לא הורץ; הרצה אוטומטית כשהמתג דלוק (לא על 1m) */
+    function autoRunOn() {
+        var box = document.querySelector("#auto-run input[type=checkbox]");
+        var tf = document.querySelector(".tf-btn.active");
+        return !!(box && box.checked) && !(tf && tf.textContent.trim() === "1m");
+    }
+    document.addEventListener("input", function (e) {
+        var f = e.target && e.target.closest && e.target.closest(".param-field");
+        if (f) f.classList.add("dirty");
+    }, true);
+    document.addEventListener("change", function (e) {
+        var f = e.target && e.target.closest && e.target.closest(".param-field");
+        if (!f) return;
+        if (autoRunOn()) setTimeout(runNow, 250);
+    }, true);
+    var mo = new MutationObserver(function () {
+        document.querySelectorAll(".param-field.dirty").forEach(function (el) { el.classList.remove("dirty"); });
+    });
+    var arm = setInterval(function () {
+        var lbl = document.getElementById("run-label");
+        if (lbl) { mo.observe(lbl, {childList: true, characterData: true, subtree: true}); clearInterval(arm); }
+    }, 500);
 })();

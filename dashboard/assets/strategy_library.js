@@ -12,10 +12,10 @@
     var strategiesCache = [];
 
     function findPineEditorTab() {
-        var tabs = document.querySelectorAll(".panel-tabs .ptab");
+        var tabs = document.querySelectorAll(".panel-tabs .ptab, #more-tabs .rtab");
         for (var i = 0; i < tabs.length; i++) {
             var lbl = (tabs[i].textContent || "").trim();
-            if (lbl === "Pine Editor" || lbl === "עורך קוד") return tabs[i];
+            if (lbl === "Pine Editor" || lbl === "עורך קוד" || lbl === "קוד") return tabs[i];
         }
         return null;
     }
@@ -24,7 +24,9 @@
         var arrow = document.getElementById("strategy-lib-arrow");
         var bar = document.querySelector(".panel-bar");
         var tab = findPineEditorTab();
-        if (!arrow || !bar || !tab) return;
+        if (!arrow || !bar) return;
+        if (!tab || !tab.offsetParent) { arrow.style.display = "none"; return; }
+        arrow.style.display = "";
         var barRect = bar.getBoundingClientRect();
         var tabRect = tab.getBoundingClientRect();
         var rtl = getComputedStyle(bar).direction === "rtl";
