@@ -41,3 +41,4 @@ strategies.json
 *.key
 .streamlit/secrets.toml
 run_history.json
+paper_sessions.json

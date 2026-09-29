@@ -20,7 +20,7 @@ from dash import ALL, Dash, Input, Output, State, callback, callback_context, dc
 # ולא ל-dashboard/chart.py שנטען כ-`.chart`.
 from chart import _evenly_sampled_indices, build_performance_chart
 
-from . import lab, live, panels, results
+from . import lab, live, panels, paper, results
 from .chart import build_history_chunk_payload, build_live_bar_payload, build_payload
 from .data import (
     from_display_epoch,
@@ -445,6 +445,8 @@ def build_layout() -> html.Div:
                                          className="ptab", selected_className="ptab-sel"),
                                  dcc.Tab(label="היסטוריה והשוואה", value="history",
                                          className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="מסחר בנייר", value="paper",
+                                         className="ptab", selected_className="ptab-sel"),
                                  dcc.Tab(label="הגדרות", value="settings",
                                          className="ptab", selected_className="ptab-sel"),
                              ]),
@@ -608,6 +610,24 @@ def build_layout() -> html.Div:
                              children=_optimizer_children()),
                     html.Div(id="history-pane", style={"display": "none"}, className="rtl-pane",
                              children=[html.Div(id="history-list"), html.Div(id="history-compare")]),
+                    html.Div(id="paper-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        html.Div(className="pane-head", children=[
+                            html.Div("מסחר בנייר", className="pane-title"),
+                            html.Div("האסטרטגיה שבעורך רצה על נרות חיים מ-IB ורושמת כניסות ויציאות, בלי לשלוח פקודות. "
+                                     "הלוגיקה זהה לבקטסט: מילוי בפתיחת הנר הבא, אותם סטופ ויעד. עסקאות נספרות מהנר הסגור הראשון אחרי הפתיחה.",
+                                     className="pane-sub"),
+                        ]),
+                        html.Div(className="opt-card", children=[
+                            html.Div(className="opt-row", children=[
+                                html.Div(id="paper-strategy-label", className="opt-engine"),
+                                html.Button("▶  התחל סשן בנייר", id="paper-start-btn", n_clicks=0, className="run-btn",
+                                            title="משתמש בסימבול ובטיים-פריים שנבחרו למעלה ובפרמטרים שבבודק"),
+                                html.Span(id="paper-msg", className="opt-status"),
+                            ]),
+                        ]),
+                        dcc.Interval(id="paper-interval", interval=5000, n_intervals=0),
+                        html.Div(id="paper-body"),
+                    ]),
                 ]),
             ]),
         ]),
@@ -930,6 +950,7 @@ def toggle_panel(_n, is_open):
     Output("catalog-pane", "style"),
     Output("optimize-pane", "style"),
     Output("history-pane", "style"),
+    Output("paper-pane", "style"),
     Input("panel-tabs", "value"),
 )
 def switch_panel_tab(tab):
@@ -941,6 +962,7 @@ def switch_panel_tab(tab):
         show if tab == "catalog" else hide,
         show if tab == "optimize" else hide,
         show if tab == "history" else hide,
+        show if tab == "paper" else hide,
     )
 
 
@@ -1184,14 +1206,14 @@ def _opt_param_options(code: str):
 @callback(
     Output("opt-p1", "options"), Output("opt-p2", "options"),
     Output("opt-p1", "value"), Output("opt-engine-label", "children"),
-    Output("wb-title", "children"),
+    Output("wb-title", "children"), Output("paper-strategy-label", "children"),
     Input("code-input", "value"),
 )
 def refresh_opt_params(code):
     key, opts = _opt_param_options(code)
     first = opts[0]["value"] if opts else None
     title = lab.ENGINES[key]["title"]
-    return opts, opts, first, f"אסטרטגיה בעורך: {title}", title
+    return opts, opts, first, f"אסטרטגיה בעורך: {title}", title, f"אסטרטגיה: {title}"
 
 
 def _suggest_range(name, code):
@@ -1533,6 +1555,109 @@ def run_walk_forward(n_clicks, code, symbol, timeframe, account_value, contracts
                   commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"))
     wf = lab.walk_forward(key, df, common, overrides, grid, n_windows=int(n_windows or 5), rank_by=rank_by or "net")
     return results.walk_forward_view(wf, symbol, timeframe, range_label)
+
+
+# ---------------------------------------------------------------- מסחר בנייר
+@callback(
+    Output("paper-msg", "children"),
+    Input("paper-start-btn", "n_clicks"),
+    State("code-input", "value"), State("symbol-input", "value"), State("tf-store", "data"),
+    State("account-value-input", "value"), State("contracts-input", "value"),
+    State("multiplier-input", "value"), State("slippage-input", "value"),
+    State("settings-commission-input", "value"), State("order-type-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"),
+    State({"type": "strategy-input", "name": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def paper_start(n, code, symbol, timeframe, account_value, contracts, multiplier, slippage_ticks, commission,
+                order_type, in_vals, in_ids):
+    if not n:
+        return no_update
+    key = lab.engine_key_for_code(code)
+    params = lab.code_overrides(code)
+    params.update({id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+                   for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")})
+    common = dict(cash=float(account_value or 100_000), size=float(contracts or 1),
+                  multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
+                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"))
+    s = paper.start_session(key=key, symbol=symbol, timeframe=timeframe, params=params, common=common)
+    return f"סשן #{s['id']} נפתח ({s['title']} · {s['symbol']} {s['timeframe']}). הבדיקה הראשונה תוך כמה שניות."
+
+
+@callback(
+    Output("paper-body", "children"),
+    Input("paper-interval", "n_intervals"), Input("panel-tabs", "value"), Input("paper-msg", "children"),
+    Input({"type": "paper-stop", "index": ALL}, "n_clicks"), Input({"type": "paper-del", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def paper_refresh(_n, tab, _msg, stop_clicks, del_clicks):
+    trig = callback_context.triggered_id
+    if isinstance(trig, dict):
+        if trig.get("type") == "paper-stop" and any(c for c in stop_clicks if c):
+            paper.stop_session(int(trig["index"]))
+        elif trig.get("type") == "paper-del" and any(c for c in del_clicks if c):
+            paper.delete_session(int(trig["index"]))
+    elif tab != "paper":
+        return no_update
+    return _paper_body()
+
+
+def _paper_body():
+    sessions = paper.list_sessions()
+    if not sessions:
+        return html.Div(className="empty-state", children=[
+            html.Div("אין סשנים עדיין", className="empty-title"),
+            html.Div("בחר אסטרטגיה, ודא ש-IB Gateway מחובר, ולחץ \"התחל סשן בנייר\".", className="empty-sub")])
+    cards = []
+    for s in sessions:
+        q = paper.session_summary(s)
+        running = s["status"] == "running"
+        ib = s.get("ib")
+        badge = html.Span("פעיל" if running else "נעצר", className=("badge on" if running else "badge off"))
+        ibtxt = "IB מחובר" if ib else ("IB לא זמין" if ib is False else "ממתין לבדיקה ראשונה")
+        meta = (f"נפתח {s['started_at']} · בדיקה אחרונה {s.get('last_check') or '—'} · {ibtxt} · "
+                f"{s.get('bars', 0):,} נרות · נר סגור אחרון {str(s.get('last_bar') or '—')[:16]}"
+                + (f" · מחיר {s.get('last_price'):,.2f}" if s.get("last_price") else ""))
+        kpis = html.Div(className="paper-kpis", children=[
+            html.Div([html.Span(results.money(q["net"]), className=f"v {results._cls(q['net'])}"), html.Span("רווח ממומש", className="k")]),
+            html.Div([html.Span(results.money(q["unrealized"]), className=f"v {results._cls(q['unrealized'])}"), html.Span("לא ממומש", className="k")]),
+            html.Div([html.Span(str(q["closed"]), className="v"), html.Span("עסקאות סגורות", className="k")]),
+            html.Div([html.Span(str(q["open"]), className="v"), html.Span("פוזיציות פתוחות", className="k")]),
+            html.Div([html.Span(f"{q['win_rate']:.0f}%", className="v"), html.Span("אחוז זכייה", className="k")]),
+        ])
+        rows = []
+        for t in sorted(s["trades"], key=lambda x: -x["id"])[:25]:
+            is_open = t["status"] == "open"
+            pnl = t["unrealized"] if is_open else t["pnl"]
+            rows.append(html.Tr([
+                html.Td(f"#{t['id']}", className="muted"),
+                html.Td("לונג" if t["side"] == "long" else "שורט", className=("pos" if t["side"] == "long" else "neg")),
+                html.Td(pd.Timestamp(t["entry_time"]).strftime("%d/%m %H:%M")), html.Td(f"{t['entry_price']:,.2f}"),
+                html.Td(pd.Timestamp(t["exit_time"]).strftime("%d/%m %H:%M") if t["exit_time"] else "—"),
+                html.Td(f"{t['exit_price']:,.2f}" if t["exit_price"] else "—"),
+                html.Td(("פתוחה" if is_open else "סגורה"), className=("badge on" if is_open else "muted")),
+                html.Td(results.money(pnl), className=results._cls(pnl)),
+            ]))
+        table = html.Div(html.Table(className="trades-table", children=[
+            html.Thead(html.Tr([html.Th("#"), html.Th("כיוון"), html.Th("כניסה"), html.Th("מחיר"), html.Th("יציאה"), html.Th("מחיר"), html.Th("מצב"), html.Th("רווח/הפסד")])),
+            html.Tbody(rows)]), className="table-wrap") if rows else html.Div("עדיין אין עסקאות בסשן הזה.", className="settings-hint")
+        log = html.Div(className="paper-log", children=[html.Div(line) for line in (s.get("log") or [])[-10:][::-1]])
+        err = html.Div(f"⚠ {s['error']}", className="tester-error") if s.get("error") else None
+        params = " · ".join(f"{lab.param_label(k)}: {lab.fmt_value(v)}" for k, v in s["params"].items())
+        cards.append(html.Div(className="paper-card", children=[
+            html.Div(className="paper-head", children=[
+                html.Div([html.Span(f"#{s['id']} {s['title']}", className="cat-title"), html.Span(f" · {s['symbol']} {s['timeframe']}", className="muted"), badge]),
+                html.Div(className="cat-actions", children=[
+                    html.Button("עצור", id={"type": "paper-stop", "index": s["id"]}, n_clicks=0, className="cat-btn", disabled=not running),
+                    html.Button("מחק", id={"type": "paper-del", "index": s["id"]}, n_clicks=0, className="cat-btn"),
+                ]),
+            ]),
+            html.Div(meta, className="cat-result-when"),
+            html.Div(params, className="cat-result-when", title=params),
+            err, kpis, table,
+            html.Div("יומן", className="paper-log-title"), log,
+        ]))
+    return html.Div(cards)
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)

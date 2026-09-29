@@ -894,3 +894,16 @@ table.tv-table th { background: var(--surface-2); font-family: var(--font); font
 .trades-pagination { direction: rtl; justify-content: center; gap: 12px; margin-top: 10px; }
 .kpi-value.mc-val { font-size: 18px; }
 .wf-head { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+/* ---------- מסחר בנייר ---------- */
+.paper-card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+.paper-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-inline-start: 8px; vertical-align: middle; }
+.badge.on { background: rgba(31,191,143,.15); color: var(--up); border: 1px solid rgba(31,191,143,.35); }
+.badge.off { background: rgba(139,144,160,.12); color: var(--muted); border: 1px solid var(--line-strong); }
+.paper-kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 4px 0; }
+.paper-kpis > div { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.paper-kpis .v { font-size: 16px; font-weight: 700; unicode-bidi: plaintext; } .paper-kpis .k { font-size: 11px; color: var(--muted); }
+.paper-log-title { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.paper-log { background: #0B0E14; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12px; color: var(--muted); max-height: 160px; overflow: auto; font-variant-numeric: tabular-nums; }
+.paper-log div { padding: 2px 0; border-bottom: 1px dashed var(--line); } .paper-log div:last-child { border-bottom: 0; }
+.trades-table td.badge { border-radius: 0; background: transparent; padding: 8px 12px; }
