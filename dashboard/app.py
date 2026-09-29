@@ -294,6 +294,24 @@ def _optimizer_children():
         ]),
         dcc.Loading(html.Div(id="opt-results", className="opt-results"), type="dot", color="#2962FF"),
         dcc.Store(id="opt-store"),
+        html.Div(className="pane-head wf-head", children=[
+            html.Div("Walk-forward: אופטימיזציה מתגלגלת", className="pane-title"),
+            html.Div("ההיסטוריה נחתכת לחלונות רצופים. בכל חלון בוחרים את הפרמטרים הטובים ביותר על 70% הראשונים "
+                     "ובודקים אותם על 30% שאחריהם. סך ה\"מחוץ למדגם\" של כל החלונות הוא הביצוע הכן ביותר שאפשר לקבל "
+                     "לפרמטרים שנבחרו באופטימיזציה, ו\"יציבות\" אומרת אם אותם ערכים נבחרים שוב ושוב.",
+                     className="pane-sub"),
+        ]),
+        html.Div(className="opt-card", children=[
+            html.Div(className="opt-row", children=[
+                _fld("חלונות", dcc.Input(id="wf-windows", type="number", value=5, min=2, max=12, step=1, className="num-input tiny")),
+                _fld("דירוג לפי", dcc.Dropdown(id="wf-rank", className="settings-dropdown opt-dd", clearable=False, searchable=False,
+                                              options=[{"label": "רווח נקי", "value": "net"}, {"label": "Profit Factor", "value": "pf"}], value="net")),
+                html.Div(className="settings-field", children=[html.Span("\u00a0", className="ctl-label"),
+                    html.Button("▶  הרץ Walk-forward", id="wf-run-btn", n_clicks=0, className="run-btn",
+                                title="משתמש באותם פרמטרים וטווחים שהוגדרו למעלה")]),
+            ]),
+        ]),
+        dcc.Loading(html.Div(id="wf-results", className="opt-results"), type="dot", color="#2962FF"),
     ]
 
 
@@ -480,6 +498,8 @@ def build_layout() -> html.Div:
                                      dcc.Tab(label="עסקאות", value="trades",
                                              className="rtab", selected_className="rtab-sel"),
                                      dcc.Tab(label="חודשי", value="monthly",
+                                             className="rtab", selected_className="rtab-sel"),
+                                     dcc.Tab(label="מונטה קרלו", value="montecarlo",
                                              className="rtab", selected_className="rtab-sel"),
                                  ]),
                         # פילטר תקופה מעל גרף ה-Performance - מוצג רק בלשונית overview
@@ -1145,6 +1165,8 @@ def _result_body(tab: str, stats, cash: float, page: int = 0,
         return results.trades_table(stats, page=page, page_size=TRADES_PAGE_SIZE)
     if tab == "monthly":
         return results.monthly(stats, cash)
+    if tab == "montecarlo":
+        return results.monte_carlo_view(stats, cash)
     return results.overview(stats, cash)
 
 
@@ -1463,6 +1485,54 @@ def load_from_history(n_clicks_list):
 def mirror_run_error(text):
     text = (text or "").strip()
     return (f"⚠ {text}", False) if text else ("", True)
+
+
+@callback(
+    Output("wf-results", "children"),
+    Input("wf-run-btn", "n_clicks"),
+    State("code-input", "value"), State("symbol-input", "value"), State("tf-store", "data"),
+    State("account-value-input", "value"), State("contracts-input", "value"),
+    State("multiplier-input", "value"), State("slippage-input", "value"),
+    State("settings-commission-input", "value"), State("order-type-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"),
+    State({"type": "strategy-input", "name": ALL}, "id"),
+    State("opt-p1", "value"), State("opt-p1-min", "value"), State("opt-p1-max", "value"), State("opt-p1-step", "value"),
+    State("opt-p2", "value"), State("opt-p2-min", "value"), State("opt-p2-max", "value"), State("opt-p2-step", "value"),
+    State("bt-range", "value"), State("wf-windows", "value"), State("wf-rank", "value"),
+    prevent_initial_call=True,
+)
+def run_walk_forward(n_clicks, code, symbol, timeframe, account_value, contracts, multiplier, slippage_ticks,
+                     commission, order_type, in_vals, in_ids, p1, p1_lo, p1_hi, p1_st, p2, p2_lo, p2_hi, p2_st,
+                     bt_range, n_windows, rank_by):
+    if not n_clicks:
+        return no_update
+    symbol = (symbol or "").strip().upper()
+    key = lab.engine_key_for_code(code)
+    grid = {}
+    if p1:
+        vals = lab.value_grid(p1_lo, p1_hi, p1_st)
+        if vals:
+            grid[p1] = vals
+    if p2 and p2 != p1:
+        vals = lab.value_grid(p2_lo, p2_hi, p2_st)
+        if vals:
+            grid[p2] = vals
+    if not grid:
+        return html.Div("הגדר לפחות פרמטר אחד עם טווח וצעד תקינים (למעלה, באופטימיזציה).", className="run-error")
+    df = load_full_history(symbol, timeframe, extended_hours=True)
+    if df is None:
+        df = _FRAMES.get((symbol, timeframe))
+    if df is None:
+        return html.Div("טען נתונים קודם.", className="run-error")
+    df, range_label = lab.slice_range(df, "all" if bt_range == "chart" else bt_range, None)
+    overrides = lab.code_overrides(code)
+    overrides.update({id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+                      for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")})
+    common = dict(cash=float(account_value or 100_000), size=float(contracts or 1),
+                  multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
+                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"))
+    wf = lab.walk_forward(key, df, common, overrides, grid, n_windows=int(n_windows or 5), rank_by=rank_by or "net")
+    return results.walk_forward_view(wf, symbol, timeframe, range_label)
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)

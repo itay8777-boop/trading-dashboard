@@ -295,3 +295,98 @@ def pagination(n_trades: int, page: int, page_size: int = TRADES_PAGE) -> tuple[
         return {"display": "none"}, ""
     n_pages = max(1, -(-n_trades // page_size))
     return {"display": "flex"}, f"עמוד {page + 1} מתוך {n_pages} · {n_trades:,} עסקאות"
+
+
+# ------------------------------------------------------------------ מונטה קרלו
+def monte_carlo_view(stats: dict, cash: float) -> html.Div:
+    from . import lab
+    tr = stats["_trades"]
+    mc = lab.monte_carlo(tr, cash, n_sims=1000)
+    if not mc.get("ok"):
+        return _empty("צריך לפחות 5 עסקאות לסימולציה.")
+    f, d = mc["final"], mc["dd"]
+    tiles = [
+        ("הסתברות לרווח", pct(mc["p_profit"], 0), _cls(mc["p_profit"] - 50), f"מתוך {mc['n_sims']:,} סימולציות"),
+        ("רווח סופי חציוני", money(f["p50"]), _cls(f["p50"]), f"בפועל {money(f['actual'])}"),
+        ("טווח רווח 5%–95%", f"{money(f['p5'])} עד {money(f['p95'])}", "neu", "90% מהתרחישים בתוך הטווח"),
+        ("Drawdown חציוני", money(d["p50"]), "neg", f"בפועל {money(d['actual'])}"),
+        ("Drawdown גרוע (5%)", money(d["p5"]) if "p5" in d else "—", "neg", f"הגרוע ביותר {money(d['worst'])}"),
+        ("סיכוי ל-DD גרוע מהמקור", pct(mc["p_dd_worse_than_actual"], 0), "neu", "מה שקרה בפועל היה מזל?"),
+        ("סיכוי ל-DD של 20%+", pct(mc["risk_of_ruin_20"], 0), "neg" if mc["risk_of_ruin_20"] > 5 else "neu", "מההון ההתחלתי"),
+        ("עסקאות בכל סימולציה", num(mc["n"], 0), "neu", "דגימה מחדש עם החזרה"),
+    ]
+    tiles_div = html.Div(className="kpi-grid", children=[
+        html.Div(className=f"kpi {c}", children=[html.Div(l, className="kpi-label"), html.Div(v, className="kpi-value mc-val"),
+                                                 html.Div(sub, className="kpi-sub")]) for l, v, c, sub in tiles])
+    fig = go.Figure()
+    x = mc["path_x"]
+    for p in mc["paths"]:
+        fig.add_trace(go.Scatter(x=x[:len(p)], y=p, mode="lines", line=dict(color="rgba(139,144,160,.18)", width=1),
+                                 hoverinfo="skip", showlegend=False))
+    ap = mc["actual_path"]
+    fig.add_trace(go.Scatter(x=x[:len(ap)], y=ap, mode="lines", name="בפועל", line=dict(color="#3D7BFF", width=2.2),
+                             hovertemplate="עסקה %{x}<br>%{y:$,.0f}<extra>בפועל</extra>"))
+    fig.update_layout(height=320, margin=dict(l=8, r=64, t=8, b=8), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color="#B2B5BE", size=11, family="Heebo, sans-serif"), showlegend=False,
+                      yaxis=dict(gridcolor=LINE, zeroline=True, zerolinecolor="#3a3f4a", tickformat="$,.0f", side="right"),
+                      xaxis=dict(gridcolor=LINE, showgrid=False, title="מספר עסקה"))
+    return html.Div([
+        tiles_div,
+        html.Div(className="chart-card", children=[
+            html.Div(className="chart-card-head", children=[html.Span("מסלולי הון אפשריים"),
+                                                             html.Span("אפור: 60 סימולציות מדגמיות · כחול: מה שקרה בפועל", className="muted")]),
+            dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "320px"}),
+        ]),
+        html.Div("איך לקרוא: אם ההסתברות לרווח נמוכה מ-60% או שה-Drawdown החציוני גדול בהרבה ממה שראית בבדיקה, "
+                 "התוצאה בבדיקה תלויה בסדר המקרי של העסקאות ולא ביתרון אמיתי.", className="pane-sub"),
+    ])
+
+
+# ------------------------------------------------------------------ Walk-forward
+def walk_forward_view(wf: dict, symbol: str, timeframe: str, range_label: str) -> html.Div:
+    from . import lab
+    ws = wf["windows"]
+    if not ws:
+        return _empty("לא היו מספיק נתונים לחלונות. הקטן את מספר החלונות או הרחב את הטווח.")
+    pf = wf["oos_pf"]
+    tiles = [
+        ("רווח מחוץ למדגם (סה\"כ)", money(wf["oos_net"]), _cls(wf["oos_net"]), f"{wf['oos_trades']} עסקאות בכל חלונות הבדיקה"),
+        ("Profit Factor מחוץ למדגם", num(pf) if np.isfinite(pf) else "∞", _cls(pf - 1), "על עסקאות הבדיקה בלבד"),
+        ("חלונות רווחיים", f"{wf['profitable_windows']} / {len(ws)}", _cls(wf["profitable_windows"] - len(ws) / 2), "בחלק הבדיקה של כל חלון"),
+    ]
+    for nm, stt in wf["stability"].items():
+        tiles.append((f"יציבות: {lab.param_label(nm)}", f"{stt['share']:.0f}%", _cls(stt["share"] - 60),
+                      f"הערך הנפוץ: {lab.fmt_value(stt['mode'])}"))
+    tiles_div = html.Div(className="kpi-grid", children=[
+        html.Div(className=f"kpi {c}", children=[html.Div(l, className="kpi-label"), html.Div(v, className="kpi-value mc-val"),
+                                                 html.Div(sub, className="kpi-sub")]) for l, v, c, sub in tiles])
+    head = html.Tr([html.Th("חלון"), html.Th("אימון"), html.Th("בדיקה")] + [html.Th(lab.param_label(n), title=n) for n in wf["names"]] +
+                   [html.Th("רווח באימון"), html.Th("PF אימון"), html.Th("עסקאות בבדיקה"), html.Th("רווח בבדיקה"), html.Th("PF בדיקה")])
+    body = []
+    for w in ws:
+        tr_, te = w["train"], w["test"]
+        body.append(html.Tr([
+            html.Td(f"#{w['window']}"), html.Td(f"{w['train_from']} עד {w['train_to']}", className="muted"),
+            html.Td(f"{w['test_from']} עד {w['test_to']}")] +
+            [html.Td(lab.fmt_value(w["params"][n])) for n in wf["names"]] +
+            [html.Td(money(tr_["net"]), className=_cls(tr_["net"])), html.Td(num(tr_["pf"]) if np.isfinite(tr_["pf"]) else "∞"),
+             html.Td(te["trades"]), html.Td(money(te["net"]), className=_cls(te["net"])),
+             html.Td(num(te["pf"]) if np.isfinite(te["pf"]) else "∞", className=_cls(te["pf"] - 1))]))
+    table = html.Div(html.Table(className="opt-table", children=[html.Thead(head), html.Tbody(body)]), className="opt-table-wrap")
+    curve = wf.get("oos_curve")
+    parts = [html.Div(f"{symbol} {timeframe} · {range_label} · {len(ws)} חלונות · {wf['seconds']:.1f} שניות", className="opt-note"),
+             tiles_div, table]
+    if curve is not None and len(curve):
+        x = curve["ExitTime"].to_numpy(); y = np.cumsum(curve["PnL"].to_numpy(dtype=float))
+        xs, ys = _sample(x, y)
+        fig = go.Figure(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color=(UP if y[-1] >= 0 else DOWN), width=1.8),
+                                   fill="tozeroy", fillcolor=("rgba(31,191,143,.10)" if y[-1] >= 0 else "rgba(240,71,90,.10)"),
+                                   hovertemplate="%{x|%d/%m/%y}<br>%{y:$,.0f}<extra></extra>"))
+        fig.update_layout(height=240, margin=dict(l=8, r=64, t=8, b=8), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                          font=dict(color="#B2B5BE", size=11, family="Heebo, sans-serif"), showlegend=False,
+                          yaxis=dict(gridcolor=LINE, zeroline=True, zerolinecolor="#3a3f4a", tickformat="$,.0f", side="right"),
+                          xaxis=dict(showgrid=False))
+        parts.append(html.Div(className="chart-card", children=[
+            html.Div(className="chart-card-head", children=[html.Span("עקומת ההון מחוץ למדגם"), html.Span("רק עסקאות מחלקי הבדיקה, ברצף", className="muted")]),
+            dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "240px"})]))
+    return html.Div(parts)

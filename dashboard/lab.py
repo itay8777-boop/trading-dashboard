@@ -398,3 +398,109 @@ def fmt_value(v) -> str:
     if isinstance(v, float):
         return f"{v:g}"
     return str(v)
+
+
+# ================================================================ מונטה קרלו
+def monte_carlo(trades: pd.DataFrame, cash: float, n_sims: int = 1000, seed: int = 7,
+                bootstrap: bool = True, max_paths: int = 60) -> dict:
+    """מערבב את סדר העסקאות (או דוגם מחדש עם החזרה) n_sims פעמים ומחזיר את
+    התפלגות הרווח הסופי וה-Drawdown המקסימלי. התוצאה: אחוזונים, הסתברות
+    לרווח, ומדגם של מסלולי הון לציור."""
+    pnl = trades["PnL"].to_numpy(dtype=float)
+    n = len(pnl)
+    if n < 5:
+        return {"n": n, "ok": False}
+    rng = np.random.default_rng(seed)
+    finals = np.empty(n_sims); dds = np.empty(n_sims); dd_pcts = np.empty(n_sims)
+    paths = []
+    step = max(1, n // 400)
+    for i in range(n_sims):
+        sample = rng.choice(pnl, size=n, replace=True) if bootstrap else rng.permutation(pnl)
+        cum = np.cumsum(sample)
+        peak = np.maximum.accumulate(np.concatenate([[0.0], cum]))[1:]
+        dd = cum - peak
+        finals[i] = cum[-1]; dds[i] = dd.min(); dd_pcts[i] = (dd / (cash + peak)).min() * 100
+        if len(paths) < max_paths:
+            paths.append(cum[::step])
+    actual_cum = np.cumsum(pnl)
+    actual_peak = np.maximum.accumulate(np.concatenate([[0.0], actual_cum]))[1:]
+    actual_dd = float((actual_cum - actual_peak).min())
+    q = lambda a, p: float(np.percentile(a, p))
+    return {
+        "n": n, "ok": True, "n_sims": n_sims, "bootstrap": bootstrap,
+        "final": {"p5": q(finals, 5), "p25": q(finals, 25), "p50": q(finals, 50), "p75": q(finals, 75), "p95": q(finals, 95),
+                  "mean": float(finals.mean()), "actual": float(actual_cum[-1])},
+        "dd": {"p5": q(dds, 5), "p50": q(dds, 50), "p95": q(dds, 95), "worst": float(dds.min()), "actual": actual_dd,
+               "p95_pct": q(dd_pcts, 5)},
+        "p_profit": float((finals > 0).mean() * 100),
+        "p_dd_worse_than_actual": float((dds < actual_dd).mean() * 100),
+        "risk_of_ruin_20": float((dd_pcts <= -20).mean() * 100),
+        "paths": np.array(paths), "path_x": np.arange(0, n, step)[:len(paths[0])] if paths else np.array([]),
+        "actual_path": actual_cum[::step],
+    }
+
+
+# ================================================================ Walk-forward
+def walk_forward(key: str, df: pd.DataFrame, common: dict, base_overrides: dict,
+                 grid: dict[str, list], n_windows: int = 5, train_frac: float = 0.7,
+                 rank_by: str = "net", max_combos: int = MAX_COMBOS) -> dict:
+    """אופטימיזציה מתגלגלת: ההיסטוריה נחתכת ל-n_windows חלונות רצופים; בכל חלון
+    בוחרים את הפרמטרים הטובים ביותר על החלק הראשון (train) ובודקים אותם על
+    החלק שאחריו (test). סך ה-test הוא ביצוע "כפי שהיה קורה בפועל" למי שמכוונן
+    מחדש כל תקופה. rank_by: 'net' או 'pf'."""
+    names = list(grid.keys())
+    combos = list(itertools.product(*[grid[n] for n in names]))[:max_combos]
+    n = len(df)
+    edges = np.linspace(0, n, n_windows + 1).astype(int)
+    cash = float(common.get("cash", 100_000.0))
+    windows = []
+    oos_trades = []
+    t0 = time.time()
+    for w in range(n_windows):
+        seg = df.iloc[edges[w]:edges[w + 1]]
+        cut = int(len(seg) * train_frac)
+        train, test = seg.iloc[:cut], seg.iloc[cut:]
+        if len(train) < 200 or len(test) < 50:
+            continue
+        best = None
+        for combo in combos:
+            ov = dict(base_overrides); ov.update(dict(zip(names, combo)))
+            try:
+                st = quick_stats(run_engine(key, train, common, ov), cash)
+            except S.StrategyCompileError:
+                continue
+            score = st["net"] if rank_by == "net" else (st["pf"] if np.isfinite(st["pf"]) else -1)
+            if st["trades"] < 3:
+                score = -1e18
+            if best is None or score > best[0]:
+                best = (score, dict(zip(names, combo)), st)
+        if best is None:
+            continue
+        ov = dict(base_overrides); ov.update(best[1])
+        try:
+            res_test = run_engine(key, test, common, ov)
+        except S.StrategyCompileError:
+            continue
+        st_test = quick_stats(res_test, cash)
+        oos_trades.append(res_test["_trades"])
+        windows.append({
+            "window": w + 1, "train_from": str(train.index[0])[:10], "train_to": str(train.index[-1])[:10],
+            "test_from": str(test.index[0])[:10], "test_to": str(test.index[-1])[:10],
+            "params": best[1], "train": best[2], "test": st_test,
+        })
+    all_oos = pd.concat(oos_trades) if oos_trades else pd.DataFrame(columns=["ExitTime", "PnL"])
+    oos_net = float(all_oos["PnL"].sum()) if len(all_oos) else 0.0
+    # יציבות פרמטרים: כמה חלונות בחרו את אותו ערך לכל פרמטר
+    stability = {}
+    for nm in names:
+        vals = [w["params"][nm] for w in windows]
+        if vals:
+            top = max(set(vals), key=vals.count)
+            stability[nm] = {"mode": top, "share": vals.count(top) / len(vals) * 100}
+    return {
+        "windows": windows, "names": names, "seconds": time.time() - t0,
+        "oos_net": oos_net, "oos_trades": int(len(all_oos)),
+        "oos_pf": (lambda p: (p[p > 0].sum() / abs(p[p <= 0].sum())) if (p <= 0).any() and abs(p[p <= 0].sum()) > 0 else float("inf"))(all_oos["PnL"].to_numpy(dtype=float)) if len(all_oos) else 0.0,
+        "profitable_windows": sum(1 for w in windows if w["test"]["net"] > 0),
+        "stability": stability, "oos_curve": all_oos.sort_values("ExitTime") if len(all_oos) else None,
+    }

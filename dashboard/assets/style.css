@@ -892,3 +892,5 @@ table.tv-table th { background: var(--surface-2); font-family: var(--font); font
 .year-card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 14px; min-width: 110px; text-align: center; }
 .year-k { color: var(--muted); font-size: 11px; } .year-v { font-weight: 700; font-size: 14px; unicode-bidi: plaintext; }
 .trades-pagination { direction: rtl; justify-content: center; gap: 12px; margin-top: 10px; }
+.kpi-value.mc-val { font-size: 18px; }
+.wf-head { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
