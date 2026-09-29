@@ -1212,6 +1212,115 @@ def run_vwap_revert_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size:
     )
 
 
+# ============================================================ wyckoff
+# תורת וויקוף, בגרסה מעשית לנרות תוך-יומיים: טווח מסחר (צבירה/הפצה) מזוהה
+# כשהמחיר "נעול" בין תמיכה להתנגדות במשך RANGE_BARS נרות ורוחב הטווח קטן ביחס
+# ל-ATR. האירוע המסחרי הוא ה-Spring (שבירה כוזבת מתחת לתמיכה שנסגרת חזרה בתוך
+# הטווח - היצע נבדק ולא נמצא) וה-Upthrust (המראה בכיוון ההפוך מעל ההתנגדות).
+# אישור אופציונלי: הנר הבא נסגר מעל הגבוה של ה-Spring (Sign of Strength מוקטן).
+# פילטר נפח: נפח ה-Spring עד VOL_MAX_RATIO מהממוצע (מבחן על נפח נמוך = חוסר היצע).
+# יעד: TARGET_FRAC מרוחב הטווח מעל התמיכה (1.0 = ההתנגדות, 1.5 = מהלך נמדד).
+# סטופ: מתחת לנמוך של ה-Spring פחות STOP_BUFFER_PTS. יציאה כפויה אחרי MAX_BARS.
+WYCKOFF_CODE = """\
+# strategy: wyckoff
+# Wyckoff trading-range spring / upthrust.
+# Range:   support = lowest low, resistance = highest high of the last RANGE_BARS bars,
+#          accepted only when (resistance - support) <= RANGE_ATR_MULT x ATR (a real range).
+# Spring:  low pierces support by >= SPRING_PEN_PTS but the bar closes back inside -> long.
+# Upthrust: mirror above resistance -> short.
+# Filter:  spring-bar volume <= VOL_MAX_RATIO x 20-bar average (no supply); optional EMA trend.
+# Confirm: CONFIRM_NEXT requires the next bar to close beyond the spring bar's extreme.
+# Target:  support + TARGET_FRAC x range width. Stop: spring low - STOP_BUFFER_PTS. Time stop MAX_BARS.
+RANGE_BARS = 40        # input
+RANGE_ATR_MULT = 6     # input
+SPRING_PEN_PTS = 5     # input
+VOL_MAX_RATIO = 1.2    # input
+CONFIRM_NEXT = True    # input
+TARGET_FRAC = 1.0      # input
+STOP_BUFFER_PTS = 8    # input
+MAX_BARS = 120         # input
+EMA_TREND = 0          # input
+ALLOW_SHORT = True     # input
+"""
+
+
+def _atr(high, low, close, n=14) -> np.ndarray:
+    prev_close = np.concatenate([[close[0]], close[:-1]])
+    tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
+    return pd.Series(tr).ewm(alpha=1 / n, adjust=False).mean().to_numpy()
+
+
+def run_wyckoff_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: float = 1.0,
+                         multiplier: float = 1.0, slippage_ticks: float = 0.0,
+                         commission_per_contract: float = 0.0, market_order: bool = True,
+                         tick_size: float = MNQ_TICK_SIZE,
+                         range_bars: int = 40, range_atr_mult: float = 6.0, spring_pen_pts: float = 5.0,
+                         vol_max_ratio: float = 1.2, confirm_next: bool = True, target_frac: float = 1.0,
+                         stop_buffer_pts: float = 8.0, max_bars: int = 120, ema_trend: int = 0,
+                         allow_short: bool = True) -> dict:
+    range_bars = max(5, int(range_bars))
+    if df is None or len(df) < range_bars + 30:
+        raise StrategyCompileError("אין מספיק נרות להרצה")
+    print(f"Backtest starting on {len(df)} bars from {df.index[0]} to {df.index[-1]}", flush=True)
+    times = df.index.to_numpy()
+    open_ = df["Open"].to_numpy(dtype=float); high = df["High"].to_numpy(dtype=float)
+    low = df["Low"].to_numpy(dtype=float); close = df["Close"].to_numpy(dtype=float)
+    vol = df["Volume"].to_numpy(dtype=float) if "Volume" in df.columns else np.ones(len(df))
+    n = len(close)
+
+    # טווח המסחר שנבנה *לפני* הבר הנוכחי (shift 1 - בלי הצצה קדימה)
+    hs, ls = pd.Series(high), pd.Series(low)
+    resistance = hs.shift(1).rolling(range_bars).max().to_numpy()
+    support = ls.shift(1).rolling(range_bars).min().to_numpy()
+    width = resistance - support
+    atr = _atr(high, low, close, 14)
+    is_range = np.isfinite(width) & (width > 0) & (width <= float(range_atr_mult) * atr)
+    avg_vol = pd.Series(vol).shift(1).rolling(20).mean().to_numpy()
+    vol_ok = ~np.isfinite(avg_vol) | (vol <= float(vol_max_ratio) * avg_vol)
+    if int(ema_trend) > 0:
+        ema_arr = ema(close, int(ema_trend)); trend_long = close > ema_arr; trend_short = close < ema_arr
+    else:
+        trend_long = trend_short = np.ones(n, dtype=bool)
+
+    pen = float(spring_pen_pts)
+    spring = is_range & (low <= support - pen) & (close > support) & vol_ok & trend_long
+    upthrust = is_range & (high >= resistance + pen) & (close < resistance) & vol_ok & trend_short
+    if not allow_short:
+        upthrust = np.zeros(n, dtype=bool)
+
+    # אישור: הנר הבא נסגר מעבר לקיצון של נר ה-Spring; האות עובר לנר המאשר
+    if confirm_next:
+        nxt_close = np.concatenate([close[1:], [np.nan]])
+        spring_conf = spring & (nxt_close > high)
+        upthrust_conf = upthrust & (nxt_close < low)
+        long_sig_bar = np.flatnonzero(spring_conf); short_sig_bar = np.flatnonzero(upthrust_conf)
+        long_sig = long_sig_bar + 1; short_sig = short_sig_bar + 1
+    else:
+        long_sig_bar = np.flatnonzero(spring); short_sig_bar = np.flatnonzero(upthrust)
+        long_sig, short_sig = long_sig_bar, short_sig_bar
+    keep_l = long_sig < n - 1; keep_s = short_sig < n - 1
+    long_sig, long_sig_bar = long_sig[keep_l], long_sig_bar[keep_l]
+    short_sig, short_sig_bar = short_sig[keep_s], short_sig_bar[keep_s]
+
+    sig_idx = np.concatenate([long_sig, short_sig])
+    sig_bar = np.concatenate([long_sig_bar, short_sig_bar])
+    is_long = np.concatenate([np.ones(len(long_sig), bool), np.zeros(len(short_sig), bool)])
+    buf = float(stop_buffer_pts); frac = float(target_frac)
+    sl = np.where(is_long, low[sig_bar] - buf, high[sig_bar] + buf)
+    tp = np.where(is_long, support[sig_bar] + frac * width[sig_bar], resistance[sig_bar] - frac * width[sig_bar])
+    max_exit = sig_idx + int(max_bars) if int(max_bars) > 0 else None
+    # עסקה אחת לכל טווח: מפתח = רמת התמיכה/ההתנגדות (ברזולוציית טיק)
+    dedupe = np.where(is_long, np.round(support[sig_bar] / tick_size), np.round(resistance[sig_bar] / tick_size))
+    slippage_amount = (float(slippage_ticks) * float(tick_size)) if market_order else 0.0
+    return _simulate_signed_signals(
+        times=times, open_=open_, high=high, low=low, close=close, n=n,
+        sig_idx=sig_idx, sig_is_long=is_long, sl_levels=sl, tp_levels=tp,
+        max_exit_idx=max_exit, dedupe_key=dedupe,
+        size=size, slippage_amount=slippage_amount, cash=cash, multiplier=multiplier,
+        commission_per_contract=commission_per_contract,
+    )
+
+
 # סגול אחיד לכניסה וליציאה - בדיוק כמו חצי הכניסה/יציאה של Strategy Tester ב-TradingView
 # (שם צובעים את שני האירועים באותו צבע, ולא ירוק/אדום לפי סוג האירוע).
 ENTRY_COLOR = "#C77DFF"

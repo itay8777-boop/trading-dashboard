@@ -79,6 +79,18 @@ ENGINES: dict[str, dict] = {
                    ("LAST_ENTRY_MIN", "last_entry_min", _I, 180), ("ALLOW_SHORT", "allow_short", _B, True)],
         "runner": S.run_orb_backtest,
     },
+    "wyckoff": {
+        "title": "וויקוף: Spring / Upthrust",
+        "desc": "טווח מסחר (צבירה/הפצה) בין תמיכה להתנגדות; שבירה כוזבת מתחת לתמיכה "
+                "שנסגרת חזרה בטווח, על נפח נמוך, עם אישור בנר הבא. יעד ההתנגדות, סטופ מתחת ל-Spring.",
+        "code": S.WYCKOFF_CODE,
+        "params": [("RANGE_BARS", "range_bars", _I, 40), ("RANGE_ATR_MULT", "range_atr_mult", _F, 6.0),
+                   ("SPRING_PEN_PTS", "spring_pen_pts", _F, 5.0), ("VOL_MAX_RATIO", "vol_max_ratio", _F, 1.2),
+                   ("CONFIRM_NEXT", "confirm_next", _B, True), ("TARGET_FRAC", "target_frac", _F, 1.0),
+                   ("STOP_BUFFER_PTS", "stop_buffer_pts", _F, 8.0), ("MAX_BARS", "max_bars", _I, 120),
+                   ("EMA_TREND", "ema_trend", _I, 0), ("ALLOW_SHORT", "allow_short", _B, True)],
+        "runner": S.run_wyckoff_backtest,
+    },
     "vwap_revert": {
         "title": "חזרה ל-VWAP",
         "desc": "כשהמחיר מתרחק מה-VWAP היומי ו-RSI קיצוני ומתהפך — נכנסים נגד "
@@ -370,6 +382,9 @@ LABELS: dict[str, str] = {
     "TARGET_RR": "יחס יעד/סיכון", "MIN_RANGE_PTS": "טווח מינימלי (נקודות)", "MAX_RANGE_PTS": "טווח מקסימלי (נקודות)",
     "LAST_ENTRY_MIN": "כניסה אחרונה (דקות מהפתיחה)",
     "DEVIATION_PTS": "מרחק מ-VWAP (נקודות)", "RTH_ONLY": "סשן רגיל בלבד",
+    "RANGE_BARS": "נרות לזיהוי טווח", "RANGE_ATR_MULT": "רוחב טווח מקסימלי (×ATR)",
+    "SPRING_PEN_PTS": "חדירה מינימלית (נקודות)", "VOL_MAX_RATIO": "נפח מקסימלי (×ממוצע)",
+    "CONFIRM_NEXT": "אישור בנר הבא", "TARGET_FRAC": "יעד (חלק מרוחב הטווח)", "MAX_BARS": "מקסימום נרות בעסקה",
 }
 
 
