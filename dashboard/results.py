@@ -355,12 +355,12 @@ def walk_forward_view(wf: dict, symbol: str, timeframe: str, range_label: str) -
         ("חלונות רווחיים", f"{wf['profitable_windows']} / {len(ws)}", _cls(wf["profitable_windows"] - len(ws) / 2), "בחלק הבדיקה של כל חלון"),
     ]
     for nm, stt in wf["stability"].items():
-        tiles.append((f"יציבות: {lab.param_label(nm)}", f"{stt['share']:.0f}%", _cls(stt["share"] - 60),
+        tiles.append((f"יציבות: {lab.param_en(nm)}", f"{stt['share']:.0f}%", _cls(stt["share"] - 60),
                       f"הערך הנפוץ: {lab.fmt_value(stt['mode'])}"))
     tiles_div = html.Div(className="kpi-grid", children=[
         html.Div(className=f"kpi {c}", children=[html.Div(l, className="kpi-label"), html.Div(v, className="kpi-value mc-val"),
                                                  html.Div(sub, className="kpi-sub")]) for l, v, c, sub in tiles])
-    head = html.Tr([html.Th("חלון"), html.Th("אימון"), html.Th("בדיקה")] + [html.Th(lab.param_label(n), title=n) for n in wf["names"]] +
+    head = html.Tr([html.Th("חלון"), html.Th("אימון"), html.Th("בדיקה")] + [html.Th(lab.param_en(n), title=f"{lab.param_he(n)} ({n})") for n in wf["names"]] +
                    [html.Th("רווח באימון"), html.Th("PF אימון"), html.Th("עסקאות בבדיקה"), html.Th("רווח בבדיקה"), html.Th("PF בדיקה")])
     body = []
     for w in ws:

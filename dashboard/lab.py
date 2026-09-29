@@ -368,28 +368,43 @@ def compare_figure(recs: list[dict]) -> go.Figure:
 
 # ================================================================ תוויות בעברית לפרמטרים
 # שם ה-"# input" בקוד נשאר באנגלית (הוא מזהה), אבל בממשק מציגים תווית קריאה.
-LABELS: dict[str, str] = {
-    "SMA_PERIOD": "אורך הממוצע (נרות)", "SMA_LENGTH": "אורך הממוצע (נרות)",
-    "RSI_PERIOD": "אורך RSI", "RSI_LEN": "אורך RSI",
-    "RSI_OVERSOLD": "RSI מכירת יתר", "RSI_OVERBOUGHT": "RSI קניית יתר",
-    "HAMMER_RATIO": "יחס פתיל לגוף", "STOP_LOSS_PTS": "סטופ (נקודות)", "TAKE_PROFIT_PTS": "יעד (נקודות)",
-    "SWING_BARS": "נרות לנקודת מפנה", "MIN_LEG_PTS": "רגל מינימלית (נקודות)",
-    "ENTRY_FIB": "רמת כניסה (פיבו)", "STOP_FIB": "רמת סטופ (פיבו)", "STOP_BUFFER_PTS": "מרווח סטופ (נקודות)",
-    "TARGET_EXT": "יעד (הארכת פיבו)", "RSI_CONFIRM": "אישור RSI", "RSI_LONG_MAX": "RSI מקסימלי ללונג",
-    "RSI_SHORT_MIN": "RSI מינימלי לשורט", "CANDLE_CONFIRM": "אישור נר", "EMA_TREND": "EMA למגמה (0=כבוי)",
-    "ALLOW_SHORT": "לאפשר שורט",
-    "RANGE_MINUTES": "דקות טווח פתיחה", "BUFFER_PTS": "מרווח פריצה (נקודות)", "STOP_PTS": "סטופ (נקודות)",
-    "TARGET_RR": "יחס יעד/סיכון", "MIN_RANGE_PTS": "טווח מינימלי (נקודות)", "MAX_RANGE_PTS": "טווח מקסימלי (נקודות)",
-    "LAST_ENTRY_MIN": "כניסה אחרונה (דקות מהפתיחה)",
-    "DEVIATION_PTS": "מרחק מ-VWAP (נקודות)", "RTH_ONLY": "סשן רגיל בלבד",
-    "RANGE_BARS": "נרות לזיהוי טווח", "RANGE_ATR_MULT": "רוחב טווח מקסימלי (×ATR)",
-    "SPRING_PEN_PTS": "חדירה מינימלית (נקודות)", "VOL_MAX_RATIO": "נפח מקסימלי (×ממוצע)",
-    "CONFIRM_NEXT": "אישור בנר הבא", "TARGET_FRAC": "יעד (חלק מרוחב הטווח)", "MAX_BARS": "מקסימום נרות בעסקה",
+LABELS: dict[str, tuple[str, str]] = {
+    # שם ה-input -> (שם באנגלית כמקובל בפלטפורמות מסחר, הסבר בעברית)
+    "SMA_PERIOD": ("SMA Length", "אורך הממוצע הנע"), "SMA_LENGTH": ("SMA Length", "אורך הממוצע הנע"),
+    "RSI_PERIOD": ("RSI Length", "אורך RSI"), "RSI_LEN": ("RSI Length", "אורך RSI"),
+    "RSI_OVERSOLD": ("RSI Oversold", "רמת מכירת יתר"), "RSI_OVERBOUGHT": ("RSI Overbought", "רמת קניית יתר"),
+    "HAMMER_RATIO": ("Wick / Body Ratio", "יחס פתיל לגוף"),
+    "STOP_LOSS_PTS": ("Stop Loss (pts)", "סטופ בנקודות"), "TAKE_PROFIT_PTS": ("Take Profit (pts)", "יעד בנקודות"),
+    "SWING_BARS": ("Swing Lookback", "נרות לזיהוי נקודת מפנה"), "MIN_LEG_PTS": ("Min Leg Size (pts)", "רגל מינימלית בנקודות"),
+    "ENTRY_FIB": ("Entry Retracement", "רמת פיבונאצ'י לכניסה"), "STOP_FIB": ("Stop Retracement", "רמת פיבונאצ'י לסטופ"),
+    "STOP_BUFFER_PTS": ("Stop Buffer (pts)", "מרווח סטופ בנקודות"), "TARGET_EXT": ("Target Extension", "הארכת פיבונאצ'י ליעד"),
+    "RSI_CONFIRM": ("RSI Confirmation", "אישור RSI"), "RSI_LONG_MAX": ("Max RSI for Long", "RSI מקסימלי ללונג"),
+    "RSI_SHORT_MIN": ("Min RSI for Short", "RSI מינימלי לשורט"), "CANDLE_CONFIRM": ("Candle Confirmation", "אישור נר"),
+    "EMA_TREND": ("Trend EMA Length", "EMA למגמה, 0 = כבוי"), "ALLOW_SHORT": ("Allow Shorts", "לאפשר שורט"),
+    "RANGE_MINUTES": ("Opening Range (min)", "דקות טווח הפתיחה"), "BUFFER_PTS": ("Breakout Buffer (pts)", "מרווח פריצה"),
+    "STOP_PTS": ("Stop Loss (pts)", "סטופ בנקודות"), "TARGET_RR": ("Reward / Risk", "יחס יעד לסיכון"),
+    "MIN_RANGE_PTS": ("Min Range (pts)", "טווח מינימלי"), "MAX_RANGE_PTS": ("Max Range (pts)", "טווח מקסימלי"),
+    "LAST_ENTRY_MIN": ("Last Entry (min)", "כניסה אחרונה, דקות מהפתיחה"),
+    "DEVIATION_PTS": ("VWAP Deviation (pts)", "מרחק מ-VWAP"), "RTH_ONLY": ("RTH Only", "סשן רגיל בלבד"),
+    "RANGE_BARS": ("Range Lookback", "נרות לזיהוי הטווח"), "RANGE_ATR_MULT": ("Max Range Width (×ATR)", "רוחב טווח מקסימלי"),
+    "SPRING_PEN_PTS": ("Spring Penetration (pts)", "חדירה מינימלית מתחת לתמיכה"), "VOL_MAX_RATIO": ("Max Volume (×avg)", "נפח מקסימלי ביחס לממוצע"),
+    "CONFIRM_NEXT": ("Next-Bar Confirmation", "אישור בנר הבא"), "TARGET_FRAC": ("Target (× range)", "יעד כחלק מרוחב הטווח"),
+    "MAX_BARS": ("Max Bars in Trade", "מקסימום נרות בעסקה"),
 }
 
 
+def param_en(name: str) -> str:
+    return LABELS.get(name, (name.replace("_", " ").title(), ""))[0]
+
+
+def param_he(name: str) -> str:
+    return LABELS.get(name, ("", ""))[1]
+
+
 def param_label(name: str) -> str:
-    return LABELS.get(name, name)
+    """'English (עברית)' — כמו בפלטפורמות מסחר, עם ההסבר בעברית בסוגריים."""
+    en, he = LABELS.get(name, (name.replace("_", " ").title(), ""))
+    return f"{en} ({he})" if he else en
 
 
 def fmt_value(v) -> str:

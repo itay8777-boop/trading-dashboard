@@ -907,3 +907,9 @@ table.tv-table th { background: var(--surface-2); font-family: var(--font); font
 .paper-log { background: #0B0E14; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12px; color: var(--muted); max-height: 160px; overflow: auto; font-variant-numeric: tabular-nums; }
 .paper-log div { padding: 2px 0; border-bottom: 1px dashed var(--line); } .paper-log div:last-child { border-bottom: 0; }
 .trades-table td.badge { border-radius: 0; background: transparent; padding: 8px 12px; }
+/* תוויות פרמטרים: אנגלית כמו בפלטפורמות מסחר, עברית קטנה מתחת */
+.param-field .ctl-label { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.param-field .ctl-en { color: var(--text); font-size: 12.5px; font-weight: 600; direction: ltr; text-align: right; letter-spacing: .01em; }
+.param-field .ctl-he { color: var(--muted); font-size: 11px; }
+.param-field { min-width: 172px; }
+.chip-k { direction: ltr; unicode-bidi: isolate; }

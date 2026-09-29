@@ -190,7 +190,8 @@ def _strategy_inputs_section(code: str):
     fields = []
     for item in inputs:
         name, value, type_name = item["name"], item["value"], item["type"]
-        label = lab.param_label(name) if item["recognized"] else f"{lab.param_label(name)} (לא פעיל)"
+        en, he = lab.param_en(name), lab.param_he(name)
+        label = [html.Span(en, className="ctl-en"), html.Span((he or "") + ("" if item["recognized"] else " · לא פעיל"), className="ctl-he")]
         field_id = {"type": "strategy-input", "name": name}
         if type_name == "bool":
             control = dcc.Checklist(
@@ -204,7 +205,7 @@ def _strategy_inputs_section(code: str):
                 className="num-input tiny", debounce=True,
             )
         fields.append(html.Div(className="settings-field param-field", title=name, children=[
-            html.Span(label, className="ctl-label"), control,
+            html.Div(label, className="ctl-label"), control,
         ]))
     return html.Div(className="settings-grid", children=fields)
 
@@ -236,8 +237,8 @@ def _catalog_children():
             ])
         else:
             result = html.Div("עדיין לא הורץ בסשן הזה", className="cat-result none")
-        chips = [html.Span([html.Span(lab.param_label(n), className="chip-k"), html.Span(lab.fmt_value(d), className="chip-v")],
-                          className="chip", title=n) for n, _p, _c, d in eng["params"]]
+        chips = [html.Span([html.Span(lab.param_en(n), className="chip-k"), html.Span(lab.fmt_value(d), className="chip-v")],
+                          className="chip", title=f"{lab.param_he(n)} ({n})") for n, _p, _c, d in eng["params"]]
         cards.append(html.Div(className="cat-card", children=[
             html.Div(eng["title"], className="cat-title"),
             html.Div(eng["desc"], className="cat-desc"),
@@ -1303,7 +1304,7 @@ def run_optimizer(n_clicks, code, symbol, timeframe, account_value, contracts, m
     rows = res["rows"]
     if not rows:
         return html.Div("לא התקבלו תוצאות.", className="run-error"), no_update, ""
-    header = [html.Th(lab.param_label(n), title=n) for n in res["names"]] + [
+    header = [html.Th(lab.param_en(n), title=f"{lab.param_he(n)} ({n})") for n in res["names"]] + [
         html.Th("עסקאות"), html.Th("זכייה %"), html.Th("PF"), html.Th("רווח נקי"), html.Th("DD %"),
         html.Th("מחוץ למדגם: רווח"), html.Th("מחוץ למדגם: PF"), html.Th("")]
     body = []
@@ -1407,7 +1408,7 @@ def _history_list_children():
     rows = []
     for r in lab.RUN_HISTORY:
         q = r["q"]
-        params = " · ".join(f"{lab.param_label(k)}: {lab.fmt_value(v)}" for k, v in r["params"].items())
+        params = " · ".join(f"{lab.param_en(k)}: {lab.fmt_value(v)}" for k, v in r["params"].items())
         rows.append(html.Tr([
             html.Td(dcc.Checklist(id={"type": "hist-sel", "index": r["id"]}, options=[{"label": "", "value": "on"}],
                                   value=[], className="hist-sel")),
@@ -1643,7 +1644,7 @@ def _paper_body():
             html.Tbody(rows)]), className="table-wrap") if rows else html.Div("עדיין אין עסקאות בסשן הזה.", className="settings-hint")
         log = html.Div(className="paper-log", children=[html.Div(line) for line in (s.get("log") or [])[-10:][::-1]])
         err = html.Div(f"⚠ {s['error']}", className="tester-error") if s.get("error") else None
-        params = " · ".join(f"{lab.param_label(k)}: {lab.fmt_value(v)}" for k, v in s["params"].items())
+        params = " · ".join(f"{lab.param_en(k)}: {lab.fmt_value(v)}" for k, v in s["params"].items())
         cards.append(html.Div(className="paper-card", children=[
             html.Div(className="paper-head", children=[
                 html.Div([html.Span(f"#{s['id']} {s['title']}", className="cat-title"), html.Span(f" · {s['symbol']} {s['timeframe']}", className="muted"), badge]),
