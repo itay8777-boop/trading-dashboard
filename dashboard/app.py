@@ -425,7 +425,7 @@ def build_layout() -> html.Div:
                                 ]),
                             ]),
                             html.Div(id="strategy-inputs-container",
-                                     children=_strategy_inputs_section(DEFAULT_CODE)),
+                                     children=_strategy_inputs_section(lab.ENGINES["sma_cross"]["code"])),
                         ]),
                         # dcc.Loading עוטף את שני ה-Output-ים של run_or_switch (למטה) -
                         # Dash מזהה לבד קריאת callback פעילה שמשפיעה על ילד עטוף ומציג
@@ -453,7 +453,7 @@ def build_layout() -> html.Div:
                         # פותח שני שדות תאריך (perf-custom-range) - טוגל טהור ב-JS, בלי
                         # סבב לשרת (ראו clientside_callback למטה).
                         dcc.Store(id="perf-period", data="range"),
-                        html.Div(id="perf-period-bar", className="perf-period-bar", children=[
+                        html.Div(id="perf-period-bar", className="perf-period-bar", style={"display": "none"}, children=[
                             dcc.Dropdown(
                                 id="perf-period-select",
                                 options=[{"label": label, "value": key} for key, label in PERIOD_LABELS.items()],
@@ -471,7 +471,7 @@ def build_layout() -> html.Div:
                         ]),
                         dcc.Loading(html.Div(id="result-body", className="result-body",
                                  children=_html(panels.empty(
-                                     "בחר אסטרטגיה בלשונית \"אסטרטגיות\" או לחץ \"הרץ בדיקה\" למעלה כדי לראות תוצאות."))),
+                                     "בחר אסטרטגיה בבורר שלמעלה, כוונן פרמטרים ולחץ Enter או \"הרץ בדיקה\"."))),
                                     type="dot", color="#2962FF"),
                         # ניווט עמודים ל"List of Trades" - מוצג רק בלשונית trades וכשיש
                         # יותר מ-TRADES_PAGE_SIZE עסקאות (ראו run_or_switch/_trades_pagination_state).
@@ -498,7 +498,7 @@ def build_layout() -> html.Div:
                         html.Div("שים לב: בגרסה הנוכחית רצים רק המנועים המובנים (לפי שורת # strategy). "
                                  "קוד חופשי בפונקציות init/next עדיין אינו מורץ; שינוי הפרמטרים כן משפיע.",
                                  className="editor-note"),
-                        dcc.Textarea(id="code-input", value=DEFAULT_CODE, className="code-area", persistence=True, persistence_type="local",
+                        dcc.Textarea(id="code-input", value=lab.ENGINES["sma_cross"]["code"], className="code-area", persistence=True, persistence_type="local",
                                      spellCheck=False),
                         html.Div(id="run-error", className="run-error"),
                     ]),

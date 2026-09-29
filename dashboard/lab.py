@@ -39,7 +39,7 @@ ENGINES: dict[str, dict] = {
         "title": "חציית ממוצע נע (SMA)",
         "desc": "לונג כשהסגירה חוצה מעל ממוצע SMA, יציאה כשחוצה מתחתיו. "
                 "האסטרטגיה הבסיסית ביותר — טובה כקו ייחוס להשוואה.",
-        "code": S.DEFAULT_CODE,
+        "code": S.SMA_CODE,
         "params": [("SMA_PERIOD", "sma_period", _I, 20)],
         "runner": S.run_fast_sma_crossover_backtest,
         "default_marker": True,

@@ -405,6 +405,17 @@ def run_fast_sma_crossover_backtest(df: pd.DataFrame, *, cash: float = 100_000.0
     }
 
 
+# ============================================================ sma_cross
+# תבנית ברירת המחדל של חציית ממוצע נע - אותו מנוע מהיר (run_fast_sma_crossover_backtest),
+# עם הפרמטר חשוף כ-"# input" כדי שיופיע בבודק כמו בשאר האסטרטגיות.
+SMA_CODE = """\
+# strategy: sma_cross
+# Simple moving-average crossover (long only).
+# Entry: close crosses above the SMA. Exit: close crosses back below it.
+SMA_PERIOD = 20        # input
+"""
+
+
 # ============================================================ hammer_rsi
 # מנוע מובנה שני, נבחר ב-app.py:run_or_switch לפי שורת-הסימון הראשונה בקוד
 # (# strategy: hammer_rsi - ראו detect_builtin_strategy למטה) - לא הרצת קוד
