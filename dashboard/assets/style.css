@@ -990,3 +990,16 @@ tr.trade-row { cursor: pointer; } tr.trade-row:hover td { background: rgba(61,12
 .workspace.stacked > .col-resizer { order: 0; }
 .workspace.stacked > .bottom-panel { order: 1; }
 @media (max-width: 1200px) { .workspace > .col-resizer { order: 0; } .workspace > .bottom-panel { order: 1; } }
+/* הסרגל התחתון (שעון/כלים) הוא ילד רביעי של workspace: תמיד שורה משלו לרוחב מלא */
+.workspace { grid-template-rows: minmax(0, 1fr) auto; }
+.workspace > :not(.chart-pane):not(.bottom-panel):not(.col-resizer) { grid-column: 1 / -1; order: 5; }
+.workspace > .bottom-panel { grid-row: 1; } .workspace > .col-resizer { grid-row: 1; } .workspace > .chart-pane { grid-row: 1; }
+.workspace.stacked { grid-template-rows: minmax(180px, 1fr) 6px var(--lab-h, 46vh) auto; }
+.workspace.stacked > .chart-pane { grid-row: 1; } .workspace.stacked > .col-resizer { grid-row: 2; } .workspace.stacked > .bottom-panel { grid-row: 3; }
+.workspace.stacked > :not(.chart-pane):not(.bottom-panel):not(.col-resizer) { grid-row: 4; }
+.workspace.stacked.collapsed { grid-template-rows: 1fr 6px 40px auto; }
+@media (max-width: 1200px) {
+    .workspace { grid-template-rows: minmax(220px, 1fr) 6px var(--lab-h, 42vh) auto; }
+    .workspace > .chart-pane { grid-row: 1; } .workspace > .col-resizer { grid-row: 2; } .workspace > .bottom-panel { grid-row: 3; }
+    .workspace > :not(.chart-pane):not(.bottom-panel):not(.col-resizer) { grid-row: 4; }
+}
