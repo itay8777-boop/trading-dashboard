@@ -973,3 +973,15 @@ table.tv-table th { background: var(--surface-2); font-family: var(--font); font
 .chart-tooltip .pos { color: var(--up); font-weight: 600; } .chart-tooltip .neg { color: var(--down); font-weight: 600; }
 tr.trade-row { cursor: pointer; } tr.trade-row:hover td { background: rgba(61,123,255,.08) !important; }
 .workspace.collapsed .chart-toolbar { left: 12px; }
+/* מחיקת קו נבחר + פריסה למעלה/למטה */
+.draw-del { position: absolute; z-index: 7; background: var(--down); color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; font-size: 12px; font-family: var(--font); cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.4); align-items: center; gap: 4px; }
+.draw-del:hover { filter: brightness(1.1); }
+.workspace.stacked { grid-template-columns: 1fr; grid-template-rows: minmax(180px, 1fr) 6px var(--lab-h, 46vh); }
+.workspace.stacked > .chart-pane { order: -1; }
+.workspace.stacked > .bottom-panel { border-inline-start: 0; border-top: 1px solid var(--line); }
+.workspace.stacked .col-resizer { cursor: row-resize; }
+.workspace.stacked .col-resizer::after { inset: 2px 0; }
+.workspace.stacked.collapsed { grid-template-rows: 1fr 6px 40px; }
+.workspace.stacked .kpi-grid { grid-template-columns: repeat(8, 1fr); }
+.workspace.stacked .tester-bar .settings-grid { gap: 8px; }
+@media (max-width: 1200px) { .workspace { grid-template-rows: minmax(220px, 1fr) 6px var(--lab-h, 42vh); } }

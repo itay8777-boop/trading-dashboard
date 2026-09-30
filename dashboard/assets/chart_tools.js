@@ -12,7 +12,7 @@
     var S = {
         trades: [], byEntry: {}, index: [], selIdx: -1, selEntry: null,
         ctx: {tested: null, wf: [], equity: [], paper: {trades: [], open: []}},
-        drawings: [], tool: null, pending: null, hoverTrade: null,
+        drawings: [], tool: null, pending: null, hoverTrade: null, selDraw: -1,
         showEq: true, showSess: true, showCtx: true,
         overlay: null, eqChart: null, eqSeries: null, timesCache: [], lastDataLen: -1,
         seq: 0, hitboxes: [], symbolKey: "",
@@ -181,16 +181,21 @@
                 ctx.fillText("פוזיציה פתוחה בנייר · " + (t.side === "long" ? "לונג" : "שורט") + " · " + fmtMoney(t.unrealized || 0), x1 + 8, y1 - 10);
             });
             // ציורים ידניים
-            ctx.strokeStyle = C.draw; ctx.lineWidth = 1.5;
-            S.drawings.forEach(function (d) {
+            S.drawings.forEach(function (d, i) {
+                var isSel = (i === S.selDraw);
+                ctx.strokeStyle = isSel ? "#FFFFFF" : C.draw; ctx.lineWidth = isSel ? 2.5 : 1.5;
                 if (d.type === "h") { var y = seriesRef.priceToCoordinate(d.p); if (y === null) return; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-                    ctx.fillStyle = C.draw; ctx.fillText(d.p.toFixed(2), 6, y - 8); }
+                    ctx.fillStyle = isSel ? "#FFFFFF" : C.draw; ctx.fillText(d.p.toFixed(2), 6, y - 8);
+                    if (isSel) { ctx.fillStyle = "#FFFFFF"; ctx.beginPath(); ctx.arc(W / 2, y, 4, 0, Math.PI * 2); ctx.fill(); }
+                    d._sx = W / 2; d._sy = y; }
                 else if (d.type === "t") { var ax = xOf(d.t1, ts), bx = xOf(d.t2, ts), ay = seriesRef.priceToCoordinate(d.p1), by = seriesRef.priceToCoordinate(d.p2);
                     if (ax === null || bx === null || ay === null || by === null) return;
-                    // הארכה קדימה
                     var dx = bx - ax, dy = by - ay, ex = bx, ey = by; if (dx !== 0) { ex = W; ey = by + dy * (W - bx) / dx; }
-                    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, ey); ctx.stroke(); }
+                    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, ey); ctx.stroke();
+                    if (isSel) { ctx.fillStyle = "#FFFFFF"; [[ax, ay], [bx, by]].forEach(function (pt) { ctx.beginPath(); ctx.arc(pt[0], pt[1], 4, 0, Math.PI * 2); ctx.fill(); }); }
+                    d._sx = (ax + bx) / 2; d._sy = (ay + by) / 2; }
             });
+            positionDeleteButton();
             if (S.pending && S.tool === "t") { var px = xOf(S.pending.t, ts), py = seriesRef.priceToCoordinate(S.pending.p); if (px !== null && py !== null) { ctx.fillStyle = C.draw; ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill(); } }
             ctx.restore();
         }
@@ -341,7 +346,7 @@
         return {t: time, p: price, x: x, y: y};
     }
     function onChartClick(e) {
-        if (!S.tool) return;
+        if (!S.tool) { onChartSelectClick(e); return; }
         var pt = chartPointFromEvent(e); if (!pt) return;
         e.preventDefault(); e.stopPropagation();
         if (S.tool === "h") { S.drawings.push({type: "h", p: pt.p}); saveDrawings(); setTool(null); }
@@ -351,18 +356,46 @@
         }
         if (S.overlay) S.overlay.refresh();
     }
-    function onChartContextMenu(e) {
-        var t = tv(); if (!t || !S.drawings.length) return;
-        var pt = chartPointFromEvent(e); if (!pt) return;
-        var ts = t.chart.timeScale(); var hit = -1;
+    function drawingAt(pt) {
+        var t = tv(); if (!t) return -1;
+        var ts = t.chart.timeScale(); var hit = -1, best = 9;
         S.drawings.forEach(function (d, i) {
-            if (d.type === "h") { var y = t.candleSeries.priceToCoordinate(d.p); if (y !== null && Math.abs(y - pt.y) < 8) hit = i; }
+            var dist = 999;
+            if (d.type === "h") { var y = t.candleSeries.priceToCoordinate(d.p); if (y !== null) dist = Math.abs(y - pt.y); }
             else { var ax = xOf(d.t1, ts), bx = xOf(d.t2, ts), ay = t.candleSeries.priceToCoordinate(d.p1), by = t.candleSeries.priceToCoordinate(d.p2);
                 if (ax === null || bx === null || ay === null || by === null) return;
-                var dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1; var dist = Math.abs(dy * pt.x - dx * pt.y + bx * ay - by * ax) / len;
-                if (dist < 8) hit = i; }
+                var dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1; dist = Math.abs(dy * pt.x - dx * pt.y + bx * ay - by * ax) / len;
+                if (pt.x < Math.min(ax, bx) - 6) dist = 999; }
+            if (dist < best) { best = dist; hit = i; }
         });
-        if (hit >= 0) { e.preventDefault(); S.drawings.splice(hit, 1); saveDrawings(); if (S.overlay) S.overlay.refresh(); }
+        return hit;
+    }
+    function selectDrawing(i) {
+        S.selDraw = i;
+        if (S.overlay) S.overlay.refresh();
+        positionDeleteButton();
+    }
+    function deleteSelectedDrawing() {
+        if (S.selDraw < 0) return;
+        S.drawings.splice(S.selDraw, 1); S.selDraw = -1; saveDrawings();
+        if (S.overlay) S.overlay.refresh(); positionDeleteButton();
+    }
+    function positionDeleteButton() {
+        var btn = $("draw-del"); if (!btn) return;
+        var d = S.drawings[S.selDraw];
+        if (!d || d._sx === undefined || d._sy === undefined) { btn.style.display = "none"; return; }
+        btn.style.display = "flex"; btn.style.left = Math.max(4, d._sx + 10) + "px"; btn.style.top = Math.max(4, d._sy - 30) + "px";
+    }
+    function onChartContextMenu(e) {
+        var pt = chartPointFromEvent(e); if (!pt) return;
+        var hit = drawingAt(pt);
+        if (hit >= 0) { e.preventDefault(); e.stopPropagation(); S.selDraw = hit; deleteSelectedDrawing(); }
+    }
+    function onChartSelectClick(e) {
+        if (S.tool) return;
+        var pt = chartPointFromEvent(e); if (!pt) return;
+        var hit = drawingAt(pt);
+        if (hit !== S.selDraw) selectDrawing(hit);
     }
 
     // ---------- חיבור ----------
@@ -379,11 +412,22 @@
         setupCrosshair();
         var el = $("chart-container");
         el.addEventListener("click", onChartClick, true);
-        el.addEventListener("contextmenu", onChartContextMenu);
+        el.addEventListener("contextmenu", onChartContextMenu, true);
+        el.addEventListener("mousemove", function (e) {
+            if (S.tool) return;
+            var pt = chartPointFromEvent(e); if (!pt) return;
+            el.style.cursor = (drawingAt(pt) >= 0) ? "pointer" : "";
+        });
+        var del = document.createElement("button");
+        del.id = "draw-del"; del.className = "draw-del"; del.textContent = "✕ מחק קו"; del.title = "מחיקת הקו שנבחר (Delete)"; del.style.display = "none";
+        del.addEventListener("click", function (ev) { ev.stopPropagation(); deleteSelectedDrawing(); });
+        document.querySelector(".chart-pane").appendChild(del);
         fetchIndexAndContext(); fetchTrades();
         return true;
     }
     var poll = setInterval(function () { if (attach()) clearInterval(poll); }, 400);
+    // פריסה שמורה (זו-לצד-זו / למעלה-למטה)
+    (function () { try { if (localStorage.getItem("sl_layout") === "stacked") { var w = setInterval(function () { var ws = document.querySelector(".workspace"); if (ws) { ws.classList.add("stacked"); clearInterval(w); } }, 200); } } catch (e) {} })();
 
     // ריצה חדשה (run-label משתנה) → רענון האינדקס, ההקשר והעסקאות; שינוי סימבול → ציורים של הסימבול
     var mo = new MutationObserver(function () { fetchIndexAndContext(); setTimeout(fetchTrades, 300); });
@@ -405,7 +449,8 @@
         else if (id === "ct-ctx") { S.showCtx = !S.showCtx; e.target.classList.toggle("on", S.showCtx); if (S.overlay) S.overlay.refresh(); }
         else if (id === "ct-hline") setTool("h");
         else if (id === "ct-tline") setTool("t");
-        else if (id === "ct-clear") { S.drawings = []; saveDrawings(); if (S.overlay) S.overlay.refresh(); }
+        else if (id === "ct-clear") { if (S.drawings.length && window.confirm("למחוק את כל " + S.drawings.length + " הקווים שציירת על " + symbol() + "?")) { S.drawings = []; S.selDraw = -1; saveDrawings(); if (S.overlay) S.overlay.refresh(); positionDeleteButton(); } }
+        else if (id === "ct-layout") { var ws = document.querySelector(".workspace"); ws.classList.toggle("stacked"); try { localStorage.setItem("sl_layout", ws.classList.contains("stacked") ? "stacked" : "side"); } catch (er) {} }
         else {
             var row = e.target.closest && e.target.closest("tr.trade-row[data-entry]");
             if (row) { jumpTo(parseInt(row.getAttribute("data-entry"), 10)); }
@@ -425,7 +470,8 @@
         else if (e.key === "s" || e.key === "S") { var b2 = $("ct-sess"); if (b2) b2.click(); }
         else if (e.key === "h" || e.key === "H") setTool("h");
         else if (e.key === "t" || e.key === "T") setTool("t");
-        else if (e.key === "Escape") { setTool(null); S.selEntry = null; S.selIdx = -1; updateCounter(); if (S.overlay) S.overlay.refresh(); }
+        else if (e.key === "Delete" || e.key === "Backspace") { if (S.selDraw >= 0) { e.preventDefault(); deleteSelectedDrawing(); } }
+        else if (e.key === "Escape") { setTool(null); S.selEntry = null; S.selIdx = -1; if (S.selDraw >= 0) selectDrawing(-1); updateCounter(); if (S.overlay) S.overlay.refresh(); }
     });
     window.__lab = {state: S, jumpTo: jumpTo, step: step, refresh: function () { fetchIndexAndContext(); fetchTrades(); }};
 })();

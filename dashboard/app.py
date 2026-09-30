@@ -594,6 +594,7 @@ def build_layout() -> html.Div:
                     html.Button("⟲", id="ct-fit", className="ct-btn", title="איפוס זום (R)"),
                     html.Button("⏭", id="ct-now", className="ct-btn", title="קפיצה לעכשיו (N)"),
                     html.Button("⛶", id="ct-full", className="ct-btn", title="גרף במסך מלא (G)"),
+                    html.Button("⇅", id="ct-layout", className="ct-btn", title="החלפת פריסה: גרף לצד הפאנל / גרף מעל הפאנל"),
                     html.Span(className="ct-sep"),
                     html.Button("▤", id="ct-eq", className="ct-btn on", title="רצועת עקומת הון (E)"),
                     html.Button("◐", id="ct-sess", className="ct-btn on", title="הצללת סשן רגיל של ארה\"ב (S)"),

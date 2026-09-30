@@ -21,9 +21,15 @@
         window.addEventListener("pointermove", function (e) {
             if (!dragging) return;
             var rect = ws.getBoundingClientRect();
-            var w = rect.right - e.clientX;               // הפאנל בצד ימין
-            w = Math.max(360, Math.min(w, rect.width - 320));
-            ws.style.setProperty("--lab-w", w + "px");
+            if (ws.classList.contains("stacked") || window.innerWidth <= 1200) {
+                var h = rect.bottom - e.clientY;           // הפאנל למטה
+                h = Math.max(200, Math.min(h, rect.height - 180));
+                ws.style.setProperty("--lab-h", h + "px");
+            } else {
+                var w = rect.right - e.clientX;            // הפאנל בצד ימין
+                w = Math.max(360, Math.min(w, rect.width - 320));
+                ws.style.setProperty("--lab-w", w + "px");
+            }
             ws.classList.remove("collapsed");
         });
         window.addEventListener("pointerup", function () {
