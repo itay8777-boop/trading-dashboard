@@ -985,3 +985,8 @@ tr.trade-row { cursor: pointer; } tr.trade-row:hover td { background: rgba(61,12
 .workspace.stacked .kpi-grid { grid-template-columns: repeat(8, 1fr); }
 .workspace.stacked .tester-bar .settings-grid { gap: 8px; }
 @media (max-width: 1200px) { .workspace { grid-template-rows: minmax(220px, 1fr) 6px var(--lab-h, 42vh); } }
+/* סדר השורות בפריסה למעלה/למטה: גרף, מפריד, פאנל */
+.workspace.stacked > .chart-pane { order: -1; }
+.workspace.stacked > .col-resizer { order: 0; }
+.workspace.stacked > .bottom-panel { order: 1; }
+@media (max-width: 1200px) { .workspace > .col-resizer { order: 0; } .workspace > .bottom-panel { order: 1; } }
