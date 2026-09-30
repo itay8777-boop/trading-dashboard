@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 
 import flask
+import numpy as np
 import pandas as pd
 from dash import ALL, Dash, Input, Output, State, callback, callback_context, dcc, html, no_update
 
@@ -24,6 +25,7 @@ from . import lab, live, panels, paper, results
 from .chart import build_history_chunk_payload, build_live_bar_payload, build_payload
 from .data import (
     from_display_epoch,
+    to_display_naive,
     INITIAL_DAYS,
     TIMEFRAME_ORDER,
     DataError,
@@ -584,6 +586,26 @@ def build_layout() -> html.Div:
             html.Div(id="col-resizer", className="col-resizer", title="גרור לשינוי רוחב · לחיצה כפולה לכיווץ הפאנל"),
             html.Div(className="chart-pane", children=[
                 html.Div(id="chart-container"),
+                html.Div(id="chart-toolbar", className="chart-toolbar", children=[
+                    html.Button("‹", id="ct-prev", className="ct-btn", title="עסקה קודמת (←)"),
+                    html.Span("—", id="ct-counter", className="ct-counter", title="עסקה נוכחית / סה\"כ"),
+                    html.Button("›", id="ct-next", className="ct-btn", title="עסקה הבאה (→)"),
+                    html.Span(className="ct-sep"),
+                    html.Button("⟲", id="ct-fit", className="ct-btn", title="איפוס זום (R)"),
+                    html.Button("⏭", id="ct-now", className="ct-btn", title="קפיצה לעכשיו (N)"),
+                    html.Button("⛶", id="ct-full", className="ct-btn", title="גרף במסך מלא (G)"),
+                    html.Span(className="ct-sep"),
+                    html.Button("▤", id="ct-eq", className="ct-btn on", title="רצועת עקומת הון (E)"),
+                    html.Button("◐", id="ct-sess", className="ct-btn on", title="הצללת סשן רגיל של ארה\"ב (S)"),
+                    html.Button("▦", id="ct-ctx", className="ct-btn on", title="טווח הבדיקה וחלונות Walk-forward"),
+                    html.Span(className="ct-sep"),
+                    html.Button("─", id="ct-hline", className="ct-btn", title="קו אופקי (H): לחיצה על הגרף"),
+                    html.Button("╱", id="ct-tline", className="ct-btn", title="קו מגמה (T): שתי לחיצות על הגרף"),
+                    html.Button("✕", id="ct-clear", className="ct-btn", title="מחיקת כל הקווים שציירת"),
+                ]),
+                html.Div(id="chart-datawin", className="chart-datawin"),
+                html.Div(id="chart-tooltip", className="chart-tooltip", style={"display": "none"}),
+                html.Div(id="equity-strip", className="equity-strip"),
                 # הספירה-לאחור בפועל היא countdownEl שנוצר דינמית ב-chart.js
                 # (ensureChart), לא div סטטי כאן.
 
@@ -1151,6 +1173,8 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
             return (no_update, no_update, no_update, str(exc), no_update,
                     no_update, no_update, no_update, no_update)
         _RESULTS["last"] = (stats, cash, symbol, timeframe)
+        _RESULTS["last_range"] = (df_backtest.index[0], df_backtest.index[-1])
+        _RESULTS.pop("wf", None)
         rec = lab.record_run(key=builtin_key, symbol=symbol, timeframe=timeframe, range_label=range_label,
                              params=strategy_overrides, stats=stats, cash=cash)
         _RESULTS["last_label"] = (f"ריצה #{rec['id']} · {rec['title']} · {symbol} {timeframe} · "
@@ -1573,6 +1597,8 @@ def run_walk_forward(n_clicks, code, symbol, timeframe, account_value, contracts
                   multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
                   commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"))
     wf = lab.walk_forward(key, df, common, overrides, grid, n_windows=int(n_windows or 5), rank_by=rank_by or "net")
+    _RESULTS["wf"] = [{"train_from": w["train_from"], "train_to": w["train_to"], "test_from": w["test_from"], "test_to": w["test_to"]}
+                      for w in wf["windows"]]
     return results.walk_forward_view(wf, symbol, timeframe, range_label)
 
 
@@ -1709,6 +1735,118 @@ def refresh_lab_head(_stats, code):
     st = last["stats"]
     return html.Span([html.Span(_fmt_money(st["net"]), className=("pos" if st["net"] > 0 else "neg")),
                       html.Span(f" · {st['trades']} עסקאות · PF {st['pf']:.2f}", className="muted")]), opts
+
+
+# ---------------------------------------------------------------- כלי הגרף (assets/chart_tools.js)
+def _ep(ts) -> int:
+    from .data import _epoch as _e
+    return int(_e(pd.Timestamp(ts)))
+
+
+def _last_for(symbol: str, timeframe: str):
+    saved = _RESULTS.get("last")
+    if not saved:
+        return None
+    stats, cash, saved_symbol, saved_timeframe = saved
+    if symbol != saved_symbol or timeframe != saved_timeframe:
+        return None
+    return stats, cash
+
+
+@app.server.route("/api/trades")
+def api_trades():
+    """העסקאות שחופפות לטווח הנראה, עם סטופ/יעד וגיאומטריה - לציור על הגרף."""
+    args = flask.request.args
+    symbol = (args.get("symbol") or "").strip().upper(); timeframe = args.get("timeframe") or ""
+    seq = args.get("seq")
+    out = {"seq": seq, "trades": [], "total": 0}
+    last = _last_for(symbol, timeframe)
+    if not last:
+        return flask.jsonify(out)
+    stats, _cash = last
+    tr = stats["_trades"]
+    if tr.empty:
+        return flask.jsonify(out)
+    try:
+        from_ts = from_display_epoch(int(args.get("from"))); to_ts = from_display_epoch(int(args.get("to")))
+    except (TypeError, ValueError):
+        return flask.jsonify(out)
+    tr = tr.sort_values("EntryTime").reset_index(drop=True)
+    tr["_i"] = np.arange(len(tr))
+    view = tr[(tr["EntryTime"] <= to_ts) & (tr["ExitTime"] >= from_ts)]
+    out["total"] = int(len(view))
+    if len(view) > 400:
+        view = view.iloc[_evenly_sampled_indices(len(view), 400)]
+    rows = []
+    has_sl = "SL" in view.columns; has_tp = "TP" in view.columns; has_ex = "Extra" in view.columns
+    for _, r in view.iterrows():
+        d = {"i": int(r["_i"]), "et": _ep(r["EntryTime"]), "xt": _ep(r["ExitTime"]),
+             "ep": float(r["EntryPrice"]), "xp": float(r["ExitPrice"]), "side": "long" if r["Size"] > 0 else "short",
+             "pnl": float(r["PnL"]), "ret": float(r["ReturnPct"]) * 100,
+             "dur": float((pd.Timestamp(r["ExitTime"]) - pd.Timestamp(r["EntryTime"])).total_seconds() / 60)}
+        if has_sl and np.isfinite(r["SL"]): d["sl"] = float(r["SL"])
+        if has_tp and np.isfinite(r["TP"]): d["tp"] = float(r["TP"])
+        if has_ex and isinstance(r["Extra"], list):
+            geo = []
+            for g in r["Extra"]:
+                g2 = dict(g)
+                for k in ("x1", "x2"):
+                    if k in g2: g2[k] = _ep(g2[k])
+                geo.append(g2)
+            d["extra"] = geo
+        rows.append(d)
+    out["trades"] = rows
+    return flask.jsonify(out)
+
+
+@app.server.route("/api/trade_index")
+def api_trade_index():
+    """כל העסקאות בתמצית (זמן כניסה, רווח) לניווט קודם/הבא."""
+    args = flask.request.args
+    symbol = (args.get("symbol") or "").strip().upper(); timeframe = args.get("timeframe") or ""
+    last = _last_for(symbol, timeframe)
+    if not last:
+        return flask.jsonify({"index": []})
+    tr = last[0]["_trades"].sort_values("EntryTime")
+    if tr.empty:
+        return flask.jsonify({"index": []})
+    et = to_display_naive(pd.DatetimeIndex(tr["EntryTime"])).astype("datetime64[s]").astype("int64").to_numpy()
+    w = (tr["PnL"].to_numpy() > 0).astype(int)
+    return flask.jsonify({"index": [[int(a), int(b)] for a, b in zip(et, w)]})
+
+
+@app.server.route("/api/context")
+def api_context():
+    """הקשר לציור: טווח הבדיקה, חלונות Walk-forward, עקומת הון דגומה, ועסקאות נייר חיות."""
+    args = flask.request.args
+    symbol = (args.get("symbol") or "").strip().upper(); timeframe = args.get("timeframe") or ""
+    out = {"tested": None, "wf": [], "equity": [], "paper": {"trades": [], "open": []}}
+    last = _last_for(symbol, timeframe)
+    if last:
+        stats, _cash = last
+        rng = _RESULTS.get("last_range")
+        if rng:
+            out["tested"] = {"from": _ep(rng[0]), "to": _ep(rng[1])}
+        out["wf"] = [{k: _ep(pd.Timestamp(v)) for k, v in w.items()} for w in _RESULTS.get("wf", [])]
+        tr = stats["_trades"]
+        if not tr.empty:
+            o = tr.sort_values("ExitTime")
+            xt = to_display_naive(pd.DatetimeIndex(o["ExitTime"])).astype("datetime64[s]").astype("int64").to_numpy()
+            cum = np.cumsum(o["PnL"].to_numpy(dtype=float))
+            idx = _evenly_sampled_indices(len(cum), 3000)
+            out["equity"] = [[int(xt[i]), float(round(cum[i], 2))] for i in idx]
+    for sess in paper.list_sessions():
+        if sess["symbol"] != symbol or sess["timeframe"] != timeframe or sess["status"] != "running":
+            continue
+        for t in sess["trades"]:
+            d = {"side": t["side"], "et": _ep(t["entry_time"]), "ep": t["entry_price"], "id": t["id"], "session": sess["id"]}
+            if t["status"] == "closed":
+                d.update({"xt": _ep(t["exit_time"]), "xp": t["exit_price"], "pnl": t["pnl"]})
+                out["paper"]["trades"].append(d)
+            else:
+                d.update({"unrealized": t.get("unrealized", 0.0)})
+                out["paper"]["open"].append(d)
+    return flask.jsonify(out)
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)

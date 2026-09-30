@@ -840,6 +840,7 @@ def run_fib_golden_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
     entry_times, exit_times = [], []
     entry_prices, exit_prices, sizes = [], [], []
     entry_fill_idxs, exit_idxs = [], []
+    sl_out, tp_out, extra_out = [], [], []
     used_legs: set = set()   # (pivot_low_idx, pivot_high_idx) - עסקה אחת לכל רגל
 
     n_events = len(all_idx)
@@ -892,6 +893,15 @@ def run_fib_golden_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
         sizes.append(size if is_long else -size)
         entry_fill_idxs.append(fill_i)
         exit_idxs.append(exit_i)
+        sl_out.append(sl_level); tp_out.append(tp_level)
+        # גיאומטריה לגרף: הרגל (מפנה→מפנה) ורמת הכניסה בפיבונאצ'י
+        a_i, b_i = int(pl_idx[sig_i]), int(ph_idx[sig_i])
+        lo_t, hi_t = times[a_i], times[b_i]
+        extra_out.append([
+            {"t": "seg", "x1": str(pd.Timestamp(lo_t)), "y1": float(pl_val[sig_i]), "x2": str(pd.Timestamp(hi_t)), "y2": float(ph_val[sig_i]), "label": "leg"},
+            {"t": "hline", "x1": str(pd.Timestamp(times[min(a_i, b_i)])), "x2": str(pd.Timestamp(times[exit_i])),
+             "y": float(long_entry_lvl[sig_i] if is_long else short_entry_lvl[sig_i]), "label": f"fib {entry_fib:g}"},
+        ])
 
         i_ptr += 1
         while i_ptr < n_events and all_idx[i_ptr] <= exit_i:
@@ -903,12 +913,13 @@ def run_fib_golden_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
         entry_times=entry_times, exit_times=exit_times,
         entry_prices=entry_prices, exit_prices=exit_prices, sizes=sizes,
         entry_fill_idxs=entry_fill_idxs, exit_idxs=exit_idxs,
+        sl=sl_out, tp=tp_out, extra=extra_out,
     )
 
 
 def _finalize_signed_trades(*, times, close, n, cash, multiplier, commission_per_contract,
                             entry_times, exit_times, entry_prices, exit_prices, sizes,
-                            entry_fill_idxs, exit_idxs) -> dict:
+                            entry_fill_idxs, exit_idxs, sl=None, tp=None, extra=None) -> dict:
     """סטטיסטיקות + equity מרשימת עסקאות עם size חתום (לונג חיובי, שורט שלילי).
     אותו חישוב בדיוק כמו הזנב של run_hammer_rsi_backtest, מופרד כדי שמנועים
     נוספים (fib_golden) לא ישכפלו אותו."""
@@ -958,6 +969,13 @@ def _finalize_signed_trades(*, times, close, n, cash, multiplier, commission_per
         "PnL": pnl,
         "ReturnPct": return_frac,
     })
+    # רמות הסטופ/היעד וגיאומטריה נוספת (רגל פיבונאצ'י, טווח וויקוף...) - לציור על הגרף
+    if sl is not None and len(sl) == n_trades:
+        trades_df["SL"] = np.asarray(sl, dtype=float)
+    if tp is not None and len(tp) == n_trades:
+        trades_df["TP"] = np.asarray(tp, dtype=float)
+    if extra is not None and len(extra) == n_trades:
+        trades_df["Extra"] = list(extra)
     return {
         "Equity Final [$]": equity_final,
         "Return [%]": return_total_pct,
@@ -996,7 +1014,8 @@ def _simulate_signed_signals(*, times, open_, high, low, close, n,
                              dedupe_key: np.ndarray | None,
                              size: float, slippage_amount: float,
                              cash: float, multiplier: float,
-                             commission_per_contract: float) -> dict:
+                             commission_per_contract: float,
+                             extras: list | None = None) -> dict:
     """הלב המשותף של המנועים המהירים: לכל אות (ממוין בזמן) מילוי בפתיחת הבר
     הבא, ואז חיפוש וקטורי של הבר הראשון שנוגע בסטופ/יעד (או יציאה כפויה ב-
     max_exit_idx - למשל סוף הסשן). עסקאות בלעדיות; dedupe_key (למשל תאריך)
@@ -1008,10 +1027,13 @@ def _simulate_signed_signals(*, times, open_, high, low, close, n,
         max_exit_idx = max_exit_idx[order]
     if dedupe_key is not None:
         dedupe_key = dedupe_key[order]
+    if extras is not None:
+        extras = [extras[k] for k in order]
 
     entry_times, exit_times = [], []
     entry_prices, exit_prices, sizes = [], [], []
     entry_fill_idxs, exit_idxs = [], []
+    sl_out, tp_out, extra_out = [], [], []
     used: set = set()
     n_events = len(sig_idx)
     i_ptr = 0
@@ -1054,6 +1076,8 @@ def _simulate_signed_signals(*, times, open_, high, low, close, n,
         entry_prices.append(entry_price); exit_prices.append(exit_price)
         sizes.append(size if is_long else -size)
         entry_fill_idxs.append(fill_i); exit_idxs.append(exit_i)
+        sl_out.append(sl_level); tp_out.append(tp_level)
+        extra_out.append(extras[i_ptr] if extras is not None else None)
         i_ptr += 1
         while i_ptr < n_events and sig_idx[i_ptr] <= exit_i:
             i_ptr += 1
@@ -1064,6 +1088,7 @@ def _simulate_signed_signals(*, times, open_, high, low, close, n,
         entry_times=entry_times, exit_times=exit_times,
         entry_prices=entry_prices, exit_prices=exit_prices, sizes=sizes,
         entry_fill_idxs=entry_fill_idxs, exit_idxs=exit_idxs,
+        sl=sl_out, tp=tp_out, extra=extra_out if extras is not None else None,
     )
 
 
@@ -1142,12 +1167,18 @@ def run_orb_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: float =
     sl = np.where(is_long, entry_est - risk, entry_est + risk)
     tp = np.where(is_long, entry_est + float(target_rr) * risk, entry_est - float(target_rr) * risk)
     slippage_amount = (float(slippage_ticks) * float(tick_size)) if market_order else 0.0
+    day_start = pd.Series(np.where(in_range, pos, np.iinfo(np.int64).max)).groupby(day_codes).transform("min").to_numpy()
+    extras = []
+    for si in sig_idx:
+        ds = int(day_start[si]) if day_start[si] < n else int(si)
+        extras.append([{"t": "box", "x1": str(pd.Timestamp(times[ds])), "x2": str(pd.Timestamp(times[int(day_exit_idx[si])])),
+                        "y1": float(or_low[si]), "y2": float(or_high[si]), "label": "opening range"}])
     return _simulate_signed_signals(
         times=times, open_=open_, high=high, low=low, close=close, n=n,
         sig_idx=sig_idx, sig_is_long=is_long, sl_levels=sl, tp_levels=tp,
         max_exit_idx=day_exit_idx[sig_idx], dedupe_key=day_codes[sig_idx],
         size=size, slippage_amount=slippage_amount, cash=cash, multiplier=multiplier,
-        commission_per_contract=commission_per_contract,
+        commission_per_contract=commission_per_contract, extras=extras,
     )
 
 
@@ -1323,12 +1354,14 @@ def run_wyckoff_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: flo
     # עסקה אחת לכל טווח: מפתח = רמת התמיכה/ההתנגדות (ברזולוציית טיק)
     dedupe = np.where(is_long, np.round(support[sig_bar] / tick_size), np.round(resistance[sig_bar] / tick_size))
     slippage_amount = (float(slippage_ticks) * float(tick_size)) if market_order else 0.0
+    extras = [[{"t": "box", "x1": str(pd.Timestamp(times[max(0, int(b) - range_bars)])), "x2": str(pd.Timestamp(times[min(n - 1, int(b) + 1)])),
+                "y1": float(support[b]), "y2": float(resistance[b]), "label": "range"}] for b in sig_bar]
     return _simulate_signed_signals(
         times=times, open_=open_, high=high, low=low, close=close, n=n,
         sig_idx=sig_idx, sig_is_long=is_long, sl_levels=sl, tp_levels=tp,
         max_exit_idx=max_exit, dedupe_key=dedupe,
         size=size, slippage_amount=slippage_amount, cash=cash, multiplier=multiplier,
-        commission_per_contract=commission_per_contract,
+        commission_per_contract=commission_per_contract, extras=extras,
     )
 
 

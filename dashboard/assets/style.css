@@ -953,3 +953,23 @@ table.tv-table th { background: var(--surface-2); font-family: var(--font); font
 }
 .param-field { flex: 1 1 150px; max-width: 230px; }
 .strategy-lib-arrow { top: auto !important; }
+
+/* ================= כלי הגרף (chart_tools.js) ================= */
+#chart-container { position: absolute; inset: 0; bottom: var(--eq-h, 0px); }
+.equity-strip { position: absolute; left: 0; right: 0; bottom: 0; height: var(--eq-h, 0px); display: none; border-top: 1px solid var(--line); background: #0B0D12; }
+.chart-toolbar { position: absolute; top: 10px; left: 12px; z-index: 5; display: flex; align-items: center; gap: 2px; background: rgba(14,17,23,.88); border: 1px solid var(--line-strong); border-radius: 8px; padding: 3px 4px; backdrop-filter: blur(6px); direction: ltr; }
+.ct-btn { background: transparent; border: 1px solid transparent; color: var(--muted); width: 28px; height: 26px; border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; font-family: var(--font); }
+.ct-btn:hover { background: rgba(255,255,255,.06); color: var(--text); }
+.ct-btn.on { color: var(--blue); }
+.ct-btn.active { background: rgba(61,123,255,.18); color: var(--blue); border-color: rgba(61,123,255,.4); }
+.ct-counter { color: var(--muted); font-size: 11px; min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
+.ct-sep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 3px; }
+.chart-datawin { position: absolute; top: 46px; left: 12px; z-index: 4; display: none; background: rgba(14,17,23,.85); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 11px; color: var(--muted); direction: rtl; pointer-events: none; font-variant-numeric: tabular-nums; }
+.dw-row { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; }
+.dw-row span { color: var(--muted-2); font-size: 10px; margin-inline-start: 6px; } .dw-row span:first-child { margin-inline-start: 0; }
+.dw-row b { color: var(--text); font-weight: 600; direction: ltr; unicode-bidi: isolate; }
+.dw-row b.pos { color: var(--up); } .dw-row b.neg { color: var(--down); }
+.chart-tooltip { position: absolute; z-index: 6; background: rgba(14,17,23,.95); border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 12px; font-size: 12px; line-height: 1.5; color: var(--text); pointer-events: none; direction: rtl; min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.chart-tooltip .pos { color: var(--up); font-weight: 600; } .chart-tooltip .neg { color: var(--down); font-weight: 600; }
+tr.trade-row { cursor: pointer; } tr.trade-row:hover td { background: rgba(61,123,255,.08) !important; }
+.workspace.collapsed .chart-toolbar { left: 12px; }

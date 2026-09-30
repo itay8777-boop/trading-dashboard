@@ -231,10 +231,11 @@ def trades_table(stats: dict, page: int = 0, page_size: int = TRADES_PAGE) -> ht
     chunk = o.iloc[start:start + page_size]
     head = html.Tr([html.Th("#"), html.Th("כיוון"), html.Th("כניסה"), html.Th("יציאה"), html.Th("מחיר כניסה"),
                     html.Th("מחיר יציאה"), html.Th("כמות"), html.Th("רווח/הפסד"), html.Th("תשואה"), html.Th("מצטבר")])
+    from .data import _epoch
     body = []
     for _, r in chunk.iterrows():
         long = r["Size"] > 0
-        body.append(html.Tr([
+        body.append(html.Tr(className="trade-row", title="לחיצה מקפיצה את הגרף לעסקה", **{"data-entry": int(_epoch(pd.Timestamp(r["EntryTime"])))}, children=[
             html.Td(int(r["No"]), className="muted"),
             html.Td("לונג" if long else "שורט", className=("pos" if long else "neg")),
             html.Td(pd.Timestamp(r["EntryTime"]).strftime("%d/%m/%y %H:%M")),
