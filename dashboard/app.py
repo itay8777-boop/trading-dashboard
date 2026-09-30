@@ -1732,6 +1732,7 @@ def _paper_body():
 @callback(
     Output("code-input", "value", allow_duplicate=True),
     Output("panel-tabs", "value", allow_duplicate=True),
+    Output("version-select", "value", allow_duplicate=True),
     Input("strategy-select", "value"), State("code-input", "value"),
     prevent_initial_call=True,
 )
@@ -1739,8 +1740,8 @@ def strategy_selected(key, code):
     """בחירה בבורר בראש הפאנל טוענת את האסטרטגיה מיד. אם הקוד כבר של אותה
     אסטרטגיה (הבורר סונכרן מהקוד) - לא נוגעים, כדי לא לדרוס פרמטרים שנערכו."""
     if not key or key not in lab.ENGINES or lab.engine_key_for_code(code) == key:
-        return no_update, no_update
-    return lab.ENGINES[key]["code"], "tester"
+        return no_update, no_update, no_update
+    return lab.ENGINES[key]["code"], "tester", None
 
 
 @callback(Output("lab-head-result", "children"), Output("strategy-select", "options"),
@@ -1958,7 +1959,8 @@ def save_or_delete_version(n_save, n_del, name, code, in_vals, in_ids, capital, 
         rest = [s for s in _load_strategies() if s.get("name") != name and s.get("name") not in _BUILTIN_STRATEGY_NAMES]
         rest.append(entry); rest.sort(key=lambda x: (x.get("name") or "").lower())
         _save_strategies(rest)
-    return _version_options(), f"נשמר: \"{name}\" ({lab.ENGINES[lab.engine_key_for_code(saved_code)]['title']}).", name, ""
+    # לא בוחרים את הגרסה בתפריט אחרי השמירה: כך בחירה שלה אחר כך תמיד נחשבת שינוי וטוענת אותה
+    return _version_options(), f"נשמר: \"{name}\" ({lab.ENGINES[lab.engine_key_for_code(saved_code)]['title']}).", None, ""
 
 
 @callback(
