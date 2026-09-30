@@ -219,17 +219,43 @@ def performance_table(stats: dict, cash: float) -> html.Div:
 
 
 # ------------------------------------------------------------------ עסקאות
-def trades_table(stats: dict, page: int = 0, page_size: int = TRADES_PAGE) -> html.Div:
-    tr = stats["_trades"]
-    if tr.empty:
-        return _empty("לא בוצעו עסקאות.")
+def apply_trade_filter(tr: pd.DataFrame, flt: dict | None) -> pd.DataFrame:
+    """מסנן וממיין את טבלת העסקאות לפי בחירת המשתמש (צד, תוצאה, גודל מינימלי, מיון)."""
     o = tr.sort_values("ExitTime").reset_index(drop=True)
     o["Cum"] = o["PnL"].cumsum()
     o["No"] = np.arange(1, len(o) + 1)
-    o = o.iloc[::-1]  # האחרונה למעלה
+    if not flt:
+        return o.iloc[::-1]
+    side = flt.get("side") or "all"; result = flt.get("result") or "all"; min_abs = float(flt.get("min_abs") or 0)
+    if side == "long": o = o[o["Size"] > 0]
+    elif side == "short": o = o[o["Size"] < 0]
+    if result == "win": o = o[o["PnL"] > 0]
+    elif result == "loss": o = o[o["PnL"] <= 0]
+    if min_abs > 0: o = o[o["PnL"].abs() >= min_abs]
+    sort = flt.get("sort") or "time_desc"
+    if sort == "time_asc": o = o.sort_values("ExitTime")
+    elif sort == "pnl_desc": o = o.sort_values("PnL", ascending=False)
+    elif sort == "pnl_asc": o = o.sort_values("PnL", ascending=True)
+    elif sort == "dur_desc": o = o.assign(_d=(o["ExitTime"] - o["EntryTime"])).sort_values("_d", ascending=False)
+    else: o = o.sort_values("ExitTime", ascending=False)
+    return o
+
+
+def filtered_count(stats: dict, flt: dict | None) -> int:
+    tr = stats["_trades"]
+    return 0 if tr.empty else int(len(apply_trade_filter(tr, flt)))
+
+
+def trades_table(stats: dict, page: int = 0, page_size: int = TRADES_PAGE, flt: dict | None = None) -> html.Div:
+    tr = stats["_trades"]
+    if tr.empty:
+        return _empty("לא בוצעו עסקאות.")
+    o = apply_trade_filter(tr, flt)
+    if o.empty:
+        return _empty("אין עסקאות שמתאימות לסינון.")
     start = page * page_size
     chunk = o.iloc[start:start + page_size]
-    head = html.Tr([html.Th("#"), html.Th("כיוון"), html.Th("כניסה"), html.Th("יציאה"), html.Th("מחיר כניסה"),
+    head = html.Tr([html.Th("#"), html.Th("כיוון"), html.Th("כניסה"), html.Th("שעה NY"), html.Th("יציאה"), html.Th("מחיר כניסה"),
                     html.Th("מחיר יציאה"), html.Th("כמות"), html.Th("רווח/הפסד"), html.Th("תשואה"), html.Th("מצטבר")])
     from .data import _epoch
     body = []
@@ -239,6 +265,7 @@ def trades_table(stats: dict, page: int = 0, page_size: int = TRADES_PAGE) -> ht
             html.Td(int(r["No"]), className="muted"),
             html.Td("לונג" if long else "שורט", className=("pos" if long else "neg")),
             html.Td(pd.Timestamp(r["EntryTime"]).strftime("%d/%m/%y %H:%M")),
+            html.Td(pd.Timestamp(r["EntryTime"]).strftime("%H:%M"), className="muted"),
             html.Td(pd.Timestamp(r["ExitTime"]).strftime("%d/%m/%y %H:%M")),
             html.Td(f"{r['EntryPrice']:,.2f}"), html.Td(f"{r['ExitPrice']:,.2f}"),
             html.Td(f"{abs(r['Size']):g}"),
@@ -278,12 +305,26 @@ def monthly(stats: dict, cash: float) -> html.Div:
     cards = [html.Div(className="year-card", children=[html.Div(str(y), className="year-k"),
                                                        html.Div(money(v), className=f"year-v {_cls(v)}")])
              for y, v in yearly.items()]
+    # רווח לפי שעת הכניסה (שעון ניו-יורק): חושף אם האסטרטגיה עובדת רק בחלק מהיום
+    hrs = tr.assign(h=tr["EntryTime"].dt.hour).groupby("h")["PnL"].agg(["sum", "count"]).reindex(range(24), fill_value=0)
+    colors = [UP if v >= 0 else DOWN for v in hrs["sum"]]
+    hfig = go.Figure(go.Bar(x=[f"{h:02d}" for h in hrs.index], y=hrs["sum"], marker_color=colors,
+                            text=[f"{int(c)}" if c else "" for c in hrs["count"]], textposition="outside", textfont=dict(size=10),
+                            hovertemplate="%{x}:00 ניו-יורק<br>%{y:$,.0f}<br>%{text} עסקאות<extra></extra>"))
+    hfig.update_layout(height=220, margin=dict(l=8, r=8, t=18, b=8), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                       font=dict(color="#B2B5BE", size=11, family="Heebo, sans-serif"), showlegend=False,
+                       xaxis=dict(showgrid=False, fixedrange=True), yaxis=dict(gridcolor=LINE, zeroline=True, zerolinecolor="#3a3f4a", tickformat="$,.0f", fixedrange=True))
+    hfig.add_vrect(x0=8.5, x1=15.5, fillcolor="rgba(61,123,255,.08)", line_width=0, annotation_text="סשן רגיל", annotation_position="top left", annotation_font_size=10)
     return html.Div([
         html.Div(className="chart-card", children=[
             html.Div(className="chart-card-head", children=[html.Span("רווח/הפסד לפי חודש"), html.Span("לפי מועד סגירת העסקה", className="muted")]),
             dcc.Graph(figure=fig, config={"displayModeBar": False}),
         ]),
         html.Div(className="year-row", children=cards),
+        html.Div(className="chart-card", style={"marginTop": "12px"}, children=[
+            html.Div(className="chart-card-head", children=[html.Span("רווח/הפסד לפי שעת הכניסה"), html.Span("שעון ניו-יורק · המספר מעל העמודה = כמות עסקאות", className="muted")]),
+            dcc.Graph(figure=hfig, config={"displayModeBar": False}, style={"height": "220px"}),
+        ]),
     ])
 
 

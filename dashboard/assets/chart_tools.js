@@ -16,7 +16,11 @@
         showEq: true, showSess: true, showCtx: true,
         overlay: null, eqChart: null, eqSeries: null, timesCache: [], lastDataLen: -1,
         seq: 0, hitboxes: [], symbolKey: "",
+        replay: null,                       // {cut: epoch, playing: bool, timer}
+        compare: {runs: [], trades: {}},    // ריצות מסומנות בהיסטוריה → עסקאות לציור
+        paperSeen: -1, engineKey: "",
     };
+    var CMP_COLORS = ["#5B8DFF", "#F5A623"];
     var C = {
         long: "#1FBF8F", short: "#F0475A", entry: "#C77DFF", sel: "#FFFFFF", sl: "#F0475A", tp: "#1FBF8F",
         geo: "rgba(255,196,64,.85)", geoFill: "rgba(255,196,64,.08)", sess: "rgba(61,123,255,.06)",
@@ -120,9 +124,30 @@
             var ctx = scope.context, ts = chartRef.timeScale(), W = scope.mediaSize.width;
             refreshTimes();
             S.hitboxes = [];
+            var H = scope.mediaSize.height;
+            var cut = S.replay ? S.replay.cut : null;
             ctx.save();
             ctx.lineWidth = 1.5; ctx.font = "600 10px Heebo, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+            // רצועת "בפוזיציה": פס דק בתחתית לכל עסקה, ירוק/אדום לפי התוצאה
             S.trades.forEach(function (t) {
+                if (cut !== null && t.et >= cut) return;
+                var a = xOf(t.et, ts), b = xOf(Math.min(t.xt, cut !== null ? cut : t.xt), ts); if (a === null || b === null) return;
+                ctx.fillStyle = t.pnl >= 0 ? "rgba(31,191,143,.55)" : "rgba(240,71,90,.55)";
+                ctx.fillRect(Math.min(a, b), H - 22, Math.max(2, Math.abs(b - a)), 4);
+            });
+            // השוואה: עסקאות של ריצות מסומנות בהיסטוריה, בצבע לכל ריצה
+            S.compare.runs.forEach(function (rid, k) {
+                var col = CMP_COLORS[k % CMP_COLORS.length]; var list = S.compare.trades[rid] || [];
+                ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+                list.forEach(function (t) {
+                    var x1 = xOf(t.et, ts), x2 = xOf(t.xt, ts), y1 = seriesRef.priceToCoordinate(t.ep), y2 = seriesRef.priceToCoordinate(t.xp);
+                    if (x1 === null || x2 === null || y1 === null || y2 === null) return;
+                    ctx.globalAlpha = 0.85; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+                    ctx.beginPath(); ctx.rect(x1 - 3, y1 - 3, 6, 6); ctx.fill(); ctx.globalAlpha = 1;
+                });
+            });
+            S.trades.forEach(function (t) {
+                if (cut !== null && t.et >= cut) return;
                 var x1 = xOf(t.et, ts), x2 = xOf(t.xt, ts);
                 var y1 = seriesRef.priceToCoordinate(t.ep), y2 = seriesRef.priceToCoordinate(t.xp);
                 if (x1 === null || x2 === null || y1 === null || y2 === null) return;
@@ -196,6 +221,14 @@
                     d._sx = (ax + bx) / 2; d._sy = (ay + by) / 2; }
             });
             positionDeleteButton();
+            // ריפליי: מסתירים את העתיד
+            if (cut !== null) {
+                var xc = xOf(cut, ts);
+                if (xc === null) xc = (cut < (S.timesCache[0] || 0)) ? 0 : W;
+                ctx.fillStyle = "rgba(0,0,0,0.97)"; ctx.fillRect(xc, 0, W - xc, H);
+                ctx.strokeStyle = "#5B8DFF"; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(xc, 0); ctx.lineTo(xc, H); ctx.stroke(); ctx.setLineDash([]);
+                ctx.fillStyle = "#5B8DFF"; ctx.font = "600 11px Heebo, sans-serif"; ctx.textAlign = "right"; ctx.fillText("צעד אחר צעד · " + fmtTime(cut, "il"), xc - 8, 14);
+            }
             if (S.pending && S.tool === "t") { var px = xOf(S.pending.t, ts), py = seriesRef.priceToCoordinate(S.pending.p); if (px !== null && py !== null) { ctx.fillStyle = C.draw; ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill(); } }
             ctx.restore();
         }
@@ -227,7 +260,7 @@
         fetch("/api/trade_index?symbol=" + encodeURIComponent(symbol()) + "&timeframe=" + encodeURIComponent(tf()))
             .then(function (r) { return r.json(); }).then(function (p) { S.index = p.index || []; S.selIdx = -1; S.selEntry = null; updateCounter(); }).catch(function () {});
         fetch("/api/context?symbol=" + encodeURIComponent(symbol()) + "&timeframe=" + encodeURIComponent(tf()))
-            .then(function (r) { return r.json(); }).then(function (p) { S.ctx = p; renderEquity(); if (S.overlay) S.overlay.refresh(); }).catch(function () {});
+            .then(function (r) { return r.json(); }).then(function (p) { S.ctx = p; renderEquity(); checkPaperAlerts(); if (S.overlay) S.overlay.refresh(); }).catch(function () {});
     }
     function updateCounter() {
         var el = $("ct-counter"); if (!el) return;
@@ -398,6 +431,137 @@
         if (hit !== S.selDraw) selectDrawing(hit);
     }
 
+    // ---------- ריפליי: צעד אחר צעד ----------
+    function replayStart() {
+        var t = tv(); if (!t) return;
+        var bar = tfSeconds();
+        var vr = t.chart.timeScale().getVisibleRange();
+        var start = S.selEntry !== null ? S.selEntry - bar * 20 : (vr ? vr.from + (vr.to - vr.from) * 0.3 : null);
+        if (start === null) return;
+        S.replay = {cut: Math.floor(start / bar) * bar, playing: false, timer: null, speed: 1};
+        var bar_el = $("replay-bar"); if (bar_el) bar_el.style.display = "flex";
+        replayRender();
+    }
+    function replayStop() {
+        if (!S.replay) return;
+        if (S.replay.timer) clearInterval(S.replay.timer);
+        S.replay = null; var bar_el = $("replay-bar"); if (bar_el) bar_el.style.display = "none";
+        var pb = $("ct-replay"); if (pb) pb.classList.remove("active");
+        if (S.overlay) S.overlay.refresh();
+    }
+    function replayStep(n) {
+        if (!S.replay) return;
+        S.replay.cut += tfSeconds() * n;
+        // מוודאים שהנר החדש נראה: אם חצינו את הקצה הימני, גוללים
+        var t = tv(); var vr = t.chart.timeScale().getVisibleRange();
+        if (vr && S.replay.cut > vr.to - tfSeconds() * 5) t.chart.timeScale().scrollToPosition(t.chart.timeScale().scrollPosition() + n, false);
+        replayRender();
+    }
+    function replayRender() {
+        var el = $("rp-time"); if (el && S.replay) el.textContent = fmtTime(S.replay.cut, "il");
+        var pb = $("ct-replay"); if (pb) pb.classList.toggle("active", !!S.replay);
+        var play = $("rp-play"); if (play && S.replay) play.textContent = S.replay.playing ? "⏸" : "▶";
+        if (S.overlay) S.overlay.refresh();
+    }
+    function replayTogglePlay() {
+        if (!S.replay) return;
+        S.replay.playing = !S.replay.playing;
+        if (S.replay.timer) { clearInterval(S.replay.timer); S.replay.timer = null; }
+        if (S.replay.playing) { S.replay.timer = setInterval(function () { replayStep(1); }, 900 / (S.replay.speed || 1)); }
+        replayRender();
+    }
+    function buildReplayBar() {
+        if ($("replay-bar")) return;
+        var pane = document.querySelector(".chart-pane"); if (!pane) return;
+        var bar = document.createElement("div"); bar.id = "replay-bar"; bar.className = "replay-bar";
+        bar.innerHTML = '<button class="ct-btn" id="rp-back" title="נר אחורה">‹</button><button class="ct-btn" id="rp-play" title="נגן / עצור">▶</button>' +
+            '<button class="ct-btn" id="rp-fwd" title="נר קדימה (רווח)">›</button><span class="rp-time" id="rp-time"></span>' +
+            '<select id="rp-speed" title="מהירות"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>' +
+            '<button class="ct-btn" id="rp-exit" title="יציאה מריפליי (Esc)">✕</button>';
+        pane.appendChild(bar);
+        var legend = document.createElement("div"); legend.id = "compare-legend"; legend.className = "compare-legend"; pane.appendChild(legend);
+        var toast = document.createElement("div"); toast.id = "chart-toast"; toast.className = "chart-toast"; pane.appendChild(toast);
+        bar.addEventListener("click", function (e) {
+            var id = e.target.id;
+            if (id === "rp-back") replayStep(-1); else if (id === "rp-fwd") replayStep(1);
+            else if (id === "rp-play") replayTogglePlay(); else if (id === "rp-exit") replayStop();
+        });
+        bar.addEventListener("change", function (e) { if (e.target.id === "rp-speed" && S.replay) { S.replay.speed = +e.target.value; if (S.replay.playing) { replayTogglePlay(); replayTogglePlay(); } } });
+    }
+    function toast(text) { var el = $("chart-toast"); if (!el) return; el.textContent = text; el.style.display = "block"; clearTimeout(el._t); el._t = setTimeout(function () { el.style.display = "none"; }, 2200); }
+
+    // ---------- צילום הגרף ----------
+    function snapshot() {
+        var t = tv(); if (!t || typeof t.chart.takeScreenshot !== "function") { toast("הצילום לא נתמך בגרסה הזו"); return; }
+        var canvas = t.chart.takeScreenshot();
+        canvas.toBlob(function (blob) {
+            var done = false;
+            if (navigator.clipboard && window.ClipboardItem) {
+                try { navigator.clipboard.write([new ClipboardItem({"image/png": blob})]).then(function () { toast("הצילום הועתק ללוח, אפשר להדביק בוואטסאפ"); }, function () { download(); }); done = true; } catch (e) {}
+            }
+            if (!done) download();
+            function download() {
+                var a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+                a.download = "strategy-lab-" + symbol() + "-" + tf() + "-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".png";
+                document.body.appendChild(a); a.click(); a.remove(); toast("הצילום ירד כקובץ");
+            }
+        });
+    }
+
+    // ---------- מחוונים אוטומטיים לפי האסטרטגיה ----------
+    var AUTO_IND = {sma_cross: [["sma", {length: "SMA_PERIOD"}]], fib_golden: [["ema", {length: "EMA_TREND"}]], vwap_revert: [["vwap", {}]], hammer_rsi: [["rsi", {length: "RSI_PERIOD"}]], wyckoff: [], orb: [["vwap", {}]]};
+    function paramValue(name) { var f = document.querySelector('.param-field[title="' + name + '"] input'); return f ? +f.value : null; }
+    function applyAutoIndicators(key) {
+        var list = AUTO_IND[key]; if (!list) return;
+        list.forEach(function (it) {
+            var ind = it[0], map = it[1];
+            Object.keys(map).forEach(function (p) { var v = paramValue(map[p]); var inp = $("ind-" + ind + "-" + p); if (inp && v && v > 0) { var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set; setter.call(inp, v); inp.dispatchEvent(new Event("input", {bubbles: true})); } });
+            var v0 = Object.keys(map).length ? paramValue(map[Object.keys(map)[0]]) : 1;
+            if (v0 === 0) return;   // למשל EMA_TREND = 0 = כבוי
+            var row = document.querySelector('.indicator-row[data-key="' + ind + '"]');
+            var removeBtn = $("ind-" + ind + "-remove"), addBtn = $("ind-" + ind + "-add");
+            var active = removeBtn && removeBtn.style.display !== "none";
+            if (active && removeBtn) { removeBtn.click(); }
+            setTimeout(function () { if (addBtn) addBtn.click(); }, 60);
+        });
+    }
+    var engineObs = new MutationObserver(function () { var k = ($("engine-key") || {}).textContent || ""; if (k && k !== S.engineKey) { S.engineKey = k; setTimeout(function () { applyAutoIndicators(k); }, 400); } });
+    var armEng = setInterval(function () { var el = $("engine-key"); if (el) { engineObs.observe(el, {childList: true, characterData: true, subtree: true}); S.engineKey = el.textContent || ""; clearInterval(armEng); } }, 500);
+
+    // ---------- השוואה על הגרף: ריצות מסומנות בהיסטוריה ----------
+    function pollCompare() {
+        var ids = [...document.querySelectorAll("tr[data-run]")].filter(function (tr) { var c = tr.querySelector(".hist-sel input"); return c && c.checked; }).map(function (tr) { return tr.getAttribute("data-run"); }).slice(0, 2);
+        var changed = ids.join(",") !== S.compare.runs.join(",");
+        S.compare.runs = ids;
+        var legend = $("compare-legend");
+        if (legend) {
+            if (ids.length) { legend.style.display = "flex"; legend.innerHTML = ids.map(function (id, k) { return '<span><i style="background:' + CMP_COLORS[k] + '"></i>ריצה #' + id + '</span>'; }).join(""); }
+            else legend.style.display = "none";
+        }
+        if (changed) fetchCompare();
+    }
+    function fetchCompare() {
+        var t = tv(); if (!t) return; var vr = t.chart.timeScale().getVisibleRange(); if (!vr) return;
+        S.compare.runs.forEach(function (rid) {
+            fetch("/api/trades?symbol=" + encodeURIComponent(symbol()) + "&timeframe=" + encodeURIComponent(tf()) + "&from=" + Math.round(vr.from) + "&to=" + Math.round(vr.to) + "&run=" + rid + "&seq=0")
+                .then(function (r) { return r.json(); }).then(function (p) { S.compare.trades[rid] = p.trades || []; if (S.overlay) S.overlay.refresh(); }).catch(function () {});
+        });
+        if (!S.compare.runs.length && S.overlay) S.overlay.refresh();
+    }
+    setInterval(pollCompare, 1200);
+
+    // ---------- התראות מסחר בנייר ----------
+    function beep() { try { var ac = new (window.AudioContext || window.webkitAudioContext)(); var o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value = 880; g.gain.value = 0.08; o.start(); setTimeout(function () { o.frequency.value = 1320; }, 120); setTimeout(function () { o.stop(); ac.close(); }, 260); } catch (e) {} }
+    function checkPaperAlerts() {
+        var p = S.ctx.paper || {trades: [], open: []}; var count = (p.trades || []).length + (p.open || []).length;
+        if (S.paperSeen >= 0 && count > S.paperSeen) {
+            beep(); toast("סשן הנייר נכנס לעסקה חדשה");
+            document.body.classList.add("paper-alert"); setTimeout(function () { document.body.classList.remove("paper-alert"); }, 5500);
+            var orig = document.title; var k = 0; var fl = setInterval(function () { document.title = (k++ % 2) ? orig : "● עסקה חדשה בנייר"; if (k > 10) { clearInterval(fl); document.title = orig; } }, 800);
+        }
+        S.paperSeen = count;
+    }
+
     // ---------- חיבור ----------
     function attach() {
         var t = tv(); if (!t || !t.chart || !t.candleSeries || typeof t.candleSeries.attachPrimitive !== "function") return false;
@@ -406,10 +570,10 @@
         loadDrawings(); S.symbolKey = symbol();
         var deb = null;
         t.chart.timeScale().subscribeVisibleTimeRangeChange(function () {
-            clearTimeout(deb); deb = setTimeout(fetchTrades, 180); syncEquityRange();
+            clearTimeout(deb); deb = setTimeout(function () { fetchTrades(); if (S.compare.runs.length) fetchCompare(); }, 180); syncEquityRange();
             if (S.overlay) S.overlay.refresh();
         });
-        setupCrosshair();
+        setupCrosshair(); buildReplayBar();
         var el = $("chart-container");
         el.addEventListener("click", onChartClick, true);
         el.addEventListener("contextmenu", onChartContextMenu, true);
@@ -447,6 +611,8 @@
         else if (id === "ct-eq") { S.showEq = !S.showEq; e.target.classList.toggle("on", S.showEq); renderEquity(); }
         else if (id === "ct-sess") { S.showSess = !S.showSess; e.target.classList.toggle("on", S.showSess); if (S.overlay) S.overlay.refresh(); }
         else if (id === "ct-ctx") { S.showCtx = !S.showCtx; e.target.classList.toggle("on", S.showCtx); if (S.overlay) S.overlay.refresh(); }
+        else if (id === "ct-replay") { if (S.replay) replayStop(); else replayStart(); }
+        else if (id === "ct-shot") snapshot();
         else if (id === "ct-hline") setTool("h");
         else if (id === "ct-tline") setTool("t");
         else if (id === "ct-clear") { if (S.drawings.length && window.confirm("למחוק את כל " + S.drawings.length + " הקווים שציירת על " + symbol() + "?")) { S.drawings = []; S.selDraw = -1; saveDrawings(); if (S.overlay) S.overlay.refresh(); positionDeleteButton(); } }
@@ -460,8 +626,8 @@
         var tg = e.target; if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.isContentEditable)) return;
         var t = tv(); if (!t) return;
         var ts = t.chart.timeScale();
-        if (e.key === "ArrowRight") { if (e.shiftKey) ts.scrollToPosition(ts.scrollPosition() + 1, false); else step(1); }
-        else if (e.key === "ArrowLeft") { if (e.shiftKey) ts.scrollToPosition(ts.scrollPosition() - 1, false); else step(-1); }
+        if (e.key === "ArrowRight") { if (S.replay) replayStep(1); else if (e.shiftKey) ts.scrollToPosition(ts.scrollPosition() + 1, false); else step(1); }
+        else if (e.key === "ArrowLeft") { if (S.replay) replayStep(-1); else if (e.shiftKey) ts.scrollToPosition(ts.scrollPosition() - 1, false); else step(-1); }
         else if (e.key === "+" || e.key === "=") { ts.applyOptions({barSpacing: Math.min(60, ts.options().barSpacing * 1.25)}); }
         else if (e.key === "-" || e.key === "_") { ts.applyOptions({barSpacing: Math.max(0.5, ts.options().barSpacing / 1.25)}); }
         else if (e.key === "r" || e.key === "R") ts.fitContent();
@@ -471,7 +637,12 @@
         else if (e.key === "h" || e.key === "H") setTool("h");
         else if (e.key === "t" || e.key === "T") setTool("t");
         else if (e.key === "Delete" || e.key === "Backspace") { if (S.selDraw >= 0) { e.preventDefault(); deleteSelectedDrawing(); } }
-        else if (e.key === "Escape") { setTool(null); S.selEntry = null; S.selIdx = -1; if (S.selDraw >= 0) selectDrawing(-1); updateCounter(); if (S.overlay) S.overlay.refresh(); }
+        else if (e.key === " " && S.replay) { e.preventDefault(); replayTogglePlay(); }
+        else if (e.key === "." && S.replay) { replayStep(1); }
+        else if (e.key === "," && S.replay) { replayStep(-1); }
+        else if (e.key === "p" || e.key === "P") { if (S.replay) replayStop(); else replayStart(); }
+        else if (e.key === "c" || e.key === "C") snapshot();
+        else if (e.key === "Escape") { if (S.replay) { replayStop(); return; } setTool(null); S.selEntry = null; S.selIdx = -1; if (S.selDraw >= 0) selectDrawing(-1); updateCounter(); if (S.overlay) S.overlay.refresh(); }
     });
     window.__lab = {state: S, jumpTo: jumpTo, step: step, refresh: function () { fetchIndexAndContext(); fetchTrades(); }};
 })();

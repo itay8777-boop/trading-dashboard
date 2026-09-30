@@ -320,7 +320,7 @@ def record_run(*, key: str, symbol: str, timeframe: str, range_label: str,
         "range": range_label, "params": {k: v for k, v in params.items() if k in {n for n, *_ in ENGINES[key]["params"]}},
         "cash": cash, "q": quick_stats(stats, cash),
         "bh": float(stats.get("Buy & Hold Return [%]", 0.0)),
-        "trades": stats["_trades"][["ExitTime", "PnL"]].copy(),
+        "trades": stats["_trades"][["EntryTime", "ExitTime", "EntryPrice", "ExitPrice", "Size", "PnL"]].copy(),
     }
     RUN_HISTORY.appendleft(rec)
     for old in list(RUN_HISTORY)[_KEEP_TRADES:]:

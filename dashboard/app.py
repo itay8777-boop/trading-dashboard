@@ -376,6 +376,9 @@ def build_layout() -> html.Div:
                              options=[{"label": eng["title"], "value": key} for key, eng in lab.ENGINES.items()],
                              value="sma_cross"),
                 html.Span(id="lab-head-result", className="lab-head-result"),
+                dcc.Dropdown(id="version-select", className="settings-dropdown version-dd", clearable=True, searchable=False,
+                             placeholder="גרסאות שמורות", options=[]),
+                html.Button("✕", id="ver-del-btn", n_clicks=0, className="cat-btn ver-del", title="מחיקת הגרסה השמורה שנבחרה", style={"display": "none"}),
             ]),
                 html.Div(className="panel-bar", children=[
                     dcc.Tabs(id="panel-tabs", value="tester", className="panel-tabs", persistence=True,
@@ -411,6 +414,7 @@ def build_layout() -> html.Div:
                                 html.Div(className="wb-head", children=[
                                     html.Div(id="wb-title", className="wb-title"),
                                     html.Div(id="run-label", className="run-label"),
+                                    html.Span(id="engine-key", style={"display": "none"}),
                                 ]),
                                 html.Div(className="wb-actions", children=[
                                     html.Span("טווח הבדיקה", className="ctl-label"),
@@ -419,6 +423,11 @@ def build_layout() -> html.Div:
                                                  value="all", clearable=False, searchable=False),
                                     html.Button("▶  הרץ בדיקה", id="tester-run-btn", n_clicks=0, className="run-btn",
                                                 title="הרצת האסטרטגיה שבעורך עם הפרמטרים שלמטה"),
+                                    html.Div(className="ver-save", children=[
+                                        dcc.Input(id="ver-name", type="text", placeholder="שם לגרסה, למשל: וויקוף שמרני", className="num-input ver-input", debounce=True),
+                                        html.Button("שמור גרסה", id="ver-save-btn", n_clicks=0, className="cat-btn", title="שומר את האסטרטגיה עם הערכים שהזנת, בשם שתבחר"),
+                                        html.Span(id="ver-msg", className="opt-status"),
+                                    ]),
                                     html.Label(className="auto-run", title="מריץ מחדש בכל שינוי פרמטר (לא על נרות דקה)", children=[
                                         dcc.Checklist(id="auto-run", options=[{"label": "", "value": "on"}], value=[], persistence=True,
                                                       className="strategy-input-checkbox"),
@@ -470,6 +479,17 @@ def build_layout() -> html.Div:
                                          dcc.Input(id="perf-custom-to", type="date",
                                                    className="perf-custom-date"),
                                      ]),
+                        ]),
+                        html.Div(id="trade-filters", className="trade-filters", style={"display": "none"}, children=[
+                            _fld("מיון", dcc.Dropdown(id="tr-sort", className="settings-dropdown opt-dd", clearable=False, searchable=False, value="time_desc",
+                                                    options=[{"label": "אחרונות קודם", "value": "time_desc"}, {"label": "ראשונות קודם", "value": "time_asc"},
+                                                             {"label": "הרווח הגדול ביותר", "value": "pnl_desc"}, {"label": "ההפסד הגדול ביותר", "value": "pnl_asc"},
+                                                             {"label": "הארוכות ביותר", "value": "dur_desc"}])),
+                            _fld("כיוון", dcc.Dropdown(id="tr-side", className="settings-dropdown", clearable=False, searchable=False, value="all",
+                                                    options=[{"label": "הכל", "value": "all"}, {"label": "לונג", "value": "long"}, {"label": "שורט", "value": "short"}])),
+                            _fld("תוצאה", dcc.Dropdown(id="tr-result", className="settings-dropdown", clearable=False, searchable=False, value="all",
+                                                     options=[{"label": "הכל", "value": "all"}, {"label": "רווח", "value": "win"}, {"label": "הפסד", "value": "loss"}])),
+                            _fld("סכום מינימלי ($)", dcc.Input(id="tr-min", type="number", value=0, min=0, step="any", className="num-input tiny", debounce=True)),
                         ]),
                         dcc.Loading(html.Div(id="result-body", className="result-body",
                                  children=_html(panels.empty(
@@ -595,6 +615,9 @@ def build_layout() -> html.Div:
                     html.Button("⏭", id="ct-now", className="ct-btn", title="קפיצה לעכשיו (N)"),
                     html.Button("⛶", id="ct-full", className="ct-btn", title="גרף במסך מלא (G)"),
                     html.Button("⇅", id="ct-layout", className="ct-btn", title="החלפת פריסה: גרף לצד הפאנל / גרף מעל הפאנל"),
+                    html.Span(className="ct-sep"),
+                    html.Button("▶|", id="ct-replay", className="ct-btn", title="צעד אחר צעד (P): מסתיר את העתיד ומתקדם נר-נר מהעסקה הנבחרת"),
+                    html.Button("📷", id="ct-shot", className="ct-btn", title="צילום הגרף ללוח (C), להדבקה בוואטסאפ"),
                     html.Span(className="ct-sep"),
                     html.Button("▤", id="ct-eq", className="ct-btn on", title="רצועת עקומת הון (E)"),
                     html.Button("◐", id="ct-sess", className="ct-btn on", title="הצללת סשן רגיל של ארה\"ב (S)"),
@@ -1184,7 +1207,7 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
             "symbol": symbol, "timeframe": timeframe, "at": pd.Timestamp.now().strftime("%d/%m %H:%M"),
             "stats": lab.quick_stats(stats, cash), "params": dict(strategy_overrides),
         }
-        trade_count = len(stats["_trades"])
+        trade_count = results.filtered_count(stats, _RESULTS.get("trade_filter"))
         # לא שולחים סימונים כאן בכלל - assets/chart.js מבקש אותם לפי דרישה
         # דרך /api/markers ברגע שהוא רואה backtestReady, על הטווח הנראה כרגע
         # בגרף, ואז שוב בכל שינוי טווח (בדיוק כמו LOD לנרות עצמם).
@@ -1203,7 +1226,7 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
         return (no_update, no_update, no_update, no_update, no_update,
                 no_update, no_update, no_update, no_update)
     stats, cash, _saved_symbol, _saved_timeframe = saved
-    trade_count = len(stats["_trades"])
+    trade_count = results.filtered_count(stats, _RESULTS.get("trade_filter"))
     page = current_page or 0
     n_pages = max(1, -(-trade_count // TRADES_PAGE_SIZE))
     if triggered == "trades-next-btn":
@@ -1227,7 +1250,7 @@ def _result_body(tab: str, stats, cash: float, page: int = 0,
     if tab == "summary":
         return results.performance_table(stats, cash)
     if tab == "trades":
-        return results.trades_table(stats, page=page, page_size=TRADES_PAGE_SIZE)
+        return results.trades_table(stats, page=page, page_size=TRADES_PAGE_SIZE, flt=_RESULTS.get("trade_filter"))
     if tab == "monthly":
         return results.monthly(stats, cash)
     if tab == "montecarlo":
@@ -1250,14 +1273,14 @@ def _opt_param_options(code: str):
     Output("opt-p1", "options"), Output("opt-p2", "options"),
     Output("opt-p1", "value"), Output("opt-engine-label", "children"),
     Output("wb-title", "children"), Output("paper-strategy-label", "children"),
-    Output("strategy-select", "value"),
+    Output("strategy-select", "value"), Output("engine-key", "children"),
     Input("code-input", "value"),
 )
 def refresh_opt_params(code):
     key, opts = _opt_param_options(code)
     first = opts[0]["value"] if opts else None
     title = lab.ENGINES[key]["title"]
-    return opts, opts, first, f"אסטרטגיה בעורך: {title}", title, f"אסטרטגיה: {title}", key
+    return opts, opts, first, f"אסטרטגיה בעורך: {title}", title, f"אסטרטגיה: {title}", key, key
 
 
 def _suggest_range(name, code):
@@ -1452,7 +1475,7 @@ def _history_list_children():
     for r in lab.RUN_HISTORY:
         q = r["q"]
         params = " · ".join(f"{lab.param_en(k)}: {lab.fmt_value(v)}" for k, v in r["params"].items())
-        rows.append(html.Tr([
+        rows.append(html.Tr(**{"data-run": r["id"]}, children=[
             html.Td(dcc.Checklist(id={"type": "hist-sel", "index": r["id"]}, options=[{"label": "", "value": "on"}],
                                   value=[], className="hist-sel")),
             html.Td(f"#{r['id']}"), html.Td(r["at"]), html.Td(r["title"]),
@@ -1761,11 +1784,18 @@ def api_trades():
     symbol = (args.get("symbol") or "").strip().upper(); timeframe = args.get("timeframe") or ""
     seq = args.get("seq")
     out = {"seq": seq, "trades": [], "total": 0}
-    last = _last_for(symbol, timeframe)
-    if not last:
-        return flask.jsonify(out)
-    stats, _cash = last
-    tr = stats["_trades"]
+    run_id = args.get("run")
+    if run_id:
+        rec = lab.get_run(int(run_id))
+        if not rec or rec.get("trades") is None or rec["symbol"] != symbol or rec["timeframe"] != timeframe:
+            return flask.jsonify(out)
+        tr = rec["trades"].copy(); tr["ReturnPct"] = 0.0
+    else:
+        last = _last_for(symbol, timeframe)
+        if not last:
+            return flask.jsonify(out)
+        stats, _cash = last
+        tr = stats["_trades"]
     if tr.empty:
         return flask.jsonify(out)
     try:
@@ -1848,6 +1878,107 @@ def api_context():
                 d.update({"unrealized": t.get("unrealized", 0.0)})
                 out["paper"]["open"].append(d)
     return flask.jsonify(out)
+
+
+# ---------------------------------------------------------------- סינון ומיון עסקאות
+@callback(Output("trade-filters", "style"), Input("result-tabs", "value"))
+def show_trade_filters(tab):
+    return {"display": "flex"} if tab == "trades" else {"display": "none"}
+
+
+@callback(
+    Output("result-body", "children", allow_duplicate=True),
+    Output("trades-page", "data", allow_duplicate=True),
+    Output("trades-pagination", "style", allow_duplicate=True),
+    Output("trades-page-info", "children", allow_duplicate=True),
+    Input("tr-sort", "value"), Input("tr-side", "value"), Input("tr-result", "value"), Input("tr-min", "value"),
+    State("result-tabs", "value"),
+    prevent_initial_call=True,
+)
+def apply_trade_filters(sort, side, result, min_abs, tab):
+    _RESULTS["trade_filter"] = {"sort": sort, "side": side, "result": result, "min_abs": min_abs or 0}
+    saved = _RESULTS.get("last")
+    if tab != "trades" or not saved:
+        return no_update, no_update, no_update, no_update
+    stats, cash, _s, _t = saved
+    count = results.filtered_count(stats, _RESULTS["trade_filter"])
+    style, info = _trades_pagination_state("trades", count, 0)
+    return results.trades_table(stats, page=0, page_size=TRADES_PAGE_SIZE, flt=_RESULTS["trade_filter"]), 0, style, info
+
+
+# ---------------------------------------------------------------- גרסאות שמורות (אסטרטגיה + הערכים שהוזנו, בשם שנבחר)
+def _user_versions() -> list[dict]:
+    with _STRATEGIES_LOCK:
+        return [s for s in _load_strategies() if s.get("name") not in _BUILTIN_STRATEGY_NAMES]
+
+
+def _version_options():
+    opts = []
+    for v in _user_versions():
+        key = lab.engine_key_for_code(v.get("code", ""))
+        opts.append({"label": "\u200f" + v["name"] + "  ·  " + lab.ENGINES[key]["title"], "value": v["name"]})
+    return opts
+
+
+@callback(Output("version-select", "options"), Input("panel-tabs", "value"))
+def init_version_options(_tab):
+    return _version_options()
+
+
+@callback(
+    Output("version-select", "options", allow_duplicate=True), Output("ver-msg", "children"),
+    Output("version-select", "value", allow_duplicate=True), Output("ver-name", "value"),
+    Input("ver-save-btn", "n_clicks"), Input("ver-del-btn", "n_clicks"),
+    State("ver-name", "value"), State("code-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"), State({"type": "strategy-input", "name": ALL}, "id"),
+    State("account-value-input", "value"), State("contracts-input", "value"), State("multiplier-input", "value"),
+    State("slippage-input", "value"), State("settings-commission-input", "value"), State("version-select", "value"),
+    prevent_initial_call=True,
+)
+def save_or_delete_version(n_save, n_del, name, code, in_vals, in_ids, capital, contracts, multiplier, slippage, commission, selected):
+    trig = callback_context.triggered_id
+    if trig == "ver-del-btn":
+        if not n_del or not selected:
+            return no_update, no_update, no_update, no_update
+        with _STRATEGIES_LOCK:
+            rest = [s for s in _load_strategies() if s.get("name") != selected and s.get("name") not in _BUILTIN_STRATEGY_NAMES]
+            _save_strategies(rest)
+        return _version_options(), f"הגרסה \"{selected}\" נמחקה.", None, no_update
+    if not n_save:
+        return no_update, no_update, no_update, no_update
+    name = (name or "").strip()
+    overrides = {id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+                 for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")}
+    saved_code = lab.apply_inputs_to_code(code or "", overrides)
+    if not name:   # בלי שם: שם אוטומטי מהאסטרטגיה והשעה, אפשר לשנות אחר כך
+        name = f"{lab.ENGINES[lab.engine_key_for_code(saved_code)]['title']} · {pd.Timestamp.now():%d/%m %H:%M}"
+    entry = {"name": name, "code": saved_code,
+             "settings": {"capital": capital, "contracts": contracts, "multiplier": multiplier, "slippage": slippage, "commission": commission}}
+    with _STRATEGIES_LOCK:
+        rest = [s for s in _load_strategies() if s.get("name") != name and s.get("name") not in _BUILTIN_STRATEGY_NAMES]
+        rest.append(entry); rest.sort(key=lambda x: (x.get("name") or "").lower())
+        _save_strategies(rest)
+    return _version_options(), f"נשמר: \"{name}\" ({lab.ENGINES[lab.engine_key_for_code(saved_code)]['title']}).", name, ""
+
+
+@callback(
+    Output("code-input", "value", allow_duplicate=True),
+    Output("panel-tabs", "value", allow_duplicate=True),
+    Output("account-value-input", "value"), Output("contracts-input", "value"), Output("multiplier-input", "value"),
+    Output("slippage-input", "value"), Output("settings-commission-input", "value"),
+    Output("ver-del-btn", "style"),
+    Input("version-select", "value"),
+    prevent_initial_call=True,
+)
+def load_version(name):
+    if not name:
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update, {"display": "none"}
+    v = next((x for x in _user_versions() if x.get("name") == name), None)
+    if not v:
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update, {"display": "none"}
+    st = v.get("settings") or {}
+    g = lambda k: (st[k] if st.get(k) is not None else no_update)
+    return v.get("code", ""), "tester", g("capital"), g("contracts"), g("multiplier"), g("slippage"), g("commission"), {"display": "inline-block"}
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)
