@@ -523,3 +523,23 @@ def walk_forward(key: str, df: pd.DataFrame, common: dict, base_overrides: dict,
         "profitable_windows": sum(1 for w in windows if w["test"]["net"] > 0),
         "stability": stability, "oos_curve": all_oos.sort_values("ExitTime") if len(all_oos) else None,
     }
+
+
+# ================================================================ רגישות לעלויות
+def cost_sensitivity(key: str, df: pd.DataFrame, common: dict, overrides: dict,
+                     slippages=(0, 2, 4, 8), commissions=(0.0, 0.75, 1.5)) -> dict:
+    """אותה אסטרטגיה עם כמה רמות סליפג' (כניסה; ביציאה = ×1.5) ועמלות. אסטרטגיה
+    שמתה ב-4 טיקים לא תשרוד בשוק אמיתי."""
+    cash = float(common.get("cash", 100_000.0))
+    rows = []
+    for slip in slippages:
+        for comm in commissions:
+            c = dict(common); c["slippage_ticks"] = float(slip); c["exit_slippage_ticks"] = float(slip) * 1.5
+            c["commission_per_contract"] = float(comm); c["fill_mode"] = "realistic"
+            try:
+                q = quick_stats(run_engine(key, df, c, overrides), cash)
+            except S.StrategyCompileError:
+                continue
+            rows.append({"slip": slip, "comm": comm, "net": q["net"], "pf": q["pf"], "trades": q["trades"], "win": q["win_rate"]})
+    base = next((r for r in rows if r["slip"] == 0 and r["comm"] == 0.0), None)
+    return {"rows": rows, "slippages": list(slippages), "commissions": list(commissions), "base_net": base["net"] if base else None}

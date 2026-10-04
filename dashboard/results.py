@@ -443,3 +443,40 @@ def walk_forward_view(wf: dict, symbol: str, timeframe: str, range_label: str) -
             html.Div(className="chart-card-head", children=[html.Span("עקומת ההון מחוץ למדגם"), html.Span("רק עסקאות מחלקי הבדיקה, ברצף", className="muted")]),
             dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "240px"})]))
     return html.Div(parts)
+
+
+# ------------------------------------------------------------------ רגישות לעלויות
+def cost_sensitivity_view(res: dict, symbol: str, timeframe: str, range_label: str) -> html.Div:
+    rows = res["rows"]
+    if not rows:
+        return _empty("לא התקבלו תוצאות.")
+    by = {(r["slip"], r["comm"]): r for r in rows}
+    head = html.Tr([html.Th("סליפג' כניסה (טיקים) \\ עמלה לצד")] + [html.Th(f"${c:.2f}") for c in res["commissions"]])
+    body = []
+    for sl in res["slippages"]:
+        cells = [html.Td(f"{sl} טיקים ({sl * 0.25:g} נק')", className="metric")]
+        for c in res["commissions"]:
+            r = by.get((sl, c))
+            if not r:
+                cells.append(html.Td("—")); continue
+            cells.append(html.Td([html.Div(money(r["net"]), className=f"{_cls(r['net'])} sens-net"),
+                                  html.Div(f"PF {num(r['pf']) if np.isfinite(r['pf']) else '∞'} · {r['trades']} עסקאות", className="muted sens-sub")]))
+        body.append(html.Tr(cells))
+    base = res.get("base_net")
+    real = by.get((2, 0.75)); harsh = by.get((4, 1.5))
+    verdict = ""
+    if base is not None and real and harsh:
+        if harsh["net"] > 0 and real["net"] > 0:
+            verdict = "שורד עלויות: רווחי גם בתרחיש הקשה (4 טיקים, 1.50$)."; vc = "pos"
+        elif real["net"] > 0:
+            verdict = "גבולי: רווחי בעלויות ריאליות אבל נשבר בתרחיש הקשה. היתרון דק."; vc = "neu"
+        else:
+            verdict = "לא שורד עלויות: מפסיד כבר בעלויות ריאליות (2 טיקים, 0.75$). הרווח בבדיקה בלי עלויות אינו אמיתי."; vc = "neg"
+    else:
+        vc = "neu"
+    return html.Div([
+        html.Div(f"{symbol} {timeframe} · {range_label} · {len(rows)} ריצות", className="opt-note"),
+        html.Div(verdict, className=f"sens-verdict {vc}") if verdict else None,
+        html.Div(html.Table(className="perf-table sens-table", children=[html.Thead(head), html.Tbody(body)]), className="table-wrap"),
+        html.Div("ללא עלויות בכלל (0 טיקים, 0$): " + (money(base) if base is not None else "—") + ". ההפרש בין התא הזה לתא של 2 טיקים ו-0.75$ הוא מחיר הביצוע האמיתי.", className="pane-sub"),
+    ])

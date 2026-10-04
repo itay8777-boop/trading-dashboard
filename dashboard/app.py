@@ -315,6 +315,16 @@ def _optimizer_children():
             ]),
         ]),
         dcc.Loading(html.Div(id="wf-results", className="opt-results"), type="dot", color="#2962FF"),
+        html.Div(className="pane-head wf-head", children=[
+            html.Div("רגישות לעלויות", className="pane-title"),
+            html.Div("אותה אסטרטגיה ואותם פרמטרים, עם 4 רמות סליפג' ו-3 רמות עמלה (12 ריצות). "
+                     "התא של 2 טיקים ו-0.75$ הוא המציאות ב-MNQ; 4 טיקים ו-1.50$ הוא תרחיש קשה (חדשות, לילה).",
+                     className="pane-sub"),
+        ]),
+        html.Div(className="opt-row opt-run-row", children=[
+            html.Button("▶  הרץ בדיקת עלויות", id="sens-run-btn", n_clicks=0, className="run-btn"),
+        ]),
+        dcc.Loading(html.Div(id="sens-results", className="opt-results"), type="dot", color="#2962FF"),
     ]
 
 
@@ -507,6 +517,14 @@ def build_layout() -> html.Div:
                                                  className="trades-page-btn"),
                                  ]),
                     ]),
+                    html.Div(id="more-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        dcc.Tabs(id="more-tabs", value="catalog", className="result-tabs", children=[
+                            dcc.Tab(label="ספריית אסטרטגיות", value="catalog", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="קוד", value="editor", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="הגדרות חשבון", value="settings", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="ביקורת נתונים", value="audit", className="rtab", selected_className="rtab-sel"),
+                        ]),
+                    ]),
                     html.Div(id="editor-pane", style={"display": "none"}, className="rtl-pane", children=[
                         html.Div(className="editor-row", children=[
                             html.Div("הקוד מגדיר את האסטרטגיה והפרמטרים שלה (שורות עם # input הופכות לשדות בבודק). "
@@ -551,13 +569,14 @@ def build_layout() -> html.Div:
                             html.Div(className="settings-field", children=[
                                 html.Span("עמלה לחוזה ($)", className="ctl-label"),
                                 dcc.Input(id="settings-commission-input", type="number", value=0.75,
-                                          min=0, step=0.01, className="num-input tiny", debounce=True,
-                                          title="לצד, כולל עמלות בורסה. MNQ ב-IB: בערך 0.75$"),
+                                          min=0, step="any", className="num-input tiny", debounce=True),
+                                html.Span("לצד, כולל עמלות בורסה. MNQ ב-IB: בערך 0.75$", className="settings-hint"),
                             ]),
                             html.Div(className="settings-field", children=[
                                 html.Span("סליפג' ביציאה בסטופ (טיקים)", className="ctl-label"),
                                 dcc.Input(id="exit-slippage-input", type="number", value=3, min=0, step=1,
-                                          className="num-input tiny", debounce=True, title="סטופ הוא פקודת שוק בתנועה: מחליק יותר מהכניסה"),
+                                          className="num-input tiny", debounce=True),
+                                html.Span("סטופ הוא פקודת שוק בתנועה ומחליק יותר מהכניסה", className="settings-hint"),
                             ]),
                             html.Div(className="settings-field", children=[
                                 html.Span("מודל מילוי", className="ctl-label"),
@@ -581,14 +600,6 @@ def build_layout() -> html.Div:
                         # שאר השדות מוצגים לשקיפות בלבד, בלי אפקט על המנוע המהיר עדיין.
                         html.Div(className="settings-hint",
                                  children="פרמטרי האסטרטגיה עצמה נמצאים בראש לשונית \"בודק אסטרטגיות\"."),
-                    ]),
-                    html.Div(id="more-pane", style={"display": "none"}, className="rtl-pane", children=[
-                        dcc.Tabs(id="more-tabs", value="catalog", className="result-tabs", children=[
-                            dcc.Tab(label="ספריית אסטרטגיות", value="catalog", className="rtab", selected_className="rtab-sel"),
-                            dcc.Tab(label="קוד", value="editor", className="rtab", selected_className="rtab-sel"),
-                            dcc.Tab(label="הגדרות חשבון", value="settings", className="rtab", selected_className="rtab-sel"),
-                            dcc.Tab(label="ביקורת נתונים", value="audit", className="rtab", selected_className="rtab-sel"),
-                        ]),
                     ]),
                     html.Div(id="audit-pane", style={"display": "none"}, className="rtl-pane", children=[
                         html.Div(className="pane-head", children=[
@@ -1721,6 +1732,9 @@ def _paper_body():
             html.Div([html.Span(str(q["closed"]), className="v"), html.Span("עסקאות סגורות", className="k")]),
             html.Div([html.Span(str(q["open"]), className="v"), html.Span("פוזיציות פתוחות", className="k")]),
             html.Div([html.Span(f"{q['win_rate']:.0f}%", className="v"), html.Span("אחוז זכייה", className="k")]),
+            html.Div([html.Span((f"{q['fill_gap_pts']:+.2f} נק'" if q.get("fill_gap_pts") is not None else "—"), className="v",
+                               title="חיובי = המילוי שהבקטסט מניח גרוע מהמחיר שנראה בזיהוי (סליפג' אפקטיבי)"),
+                      html.Span(f"פער מילוי ({q.get('fill_gap_n', 0)})", className="k")]),
         ])
         rows = []
         for t in sorted(s["trades"], key=lambda x: -x["id"])[:25]:
@@ -2023,6 +2037,35 @@ def run_audit(n, symbol):
     if not n:
         return no_update
     return audit.audit_view(audit.audit_cache((symbol or "MNQ").strip().upper()))
+
+
+@callback(
+    Output("sens-results", "children"),
+    Input("sens-run-btn", "n_clicks"),
+    State("code-input", "value"), State("symbol-input", "value"), State("tf-store", "data"),
+    State("account-value-input", "value"), State("contracts-input", "value"), State("multiplier-input", "value"),
+    State("order-type-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"), State({"type": "strategy-input", "name": ALL}, "id"),
+    State("bt-range", "value"),
+    prevent_initial_call=True,
+)
+def run_cost_sensitivity(n, code, symbol, timeframe, account_value, contracts, multiplier, order_type, in_vals, in_ids, bt_range):
+    if not n:
+        return no_update
+    symbol = (symbol or "").strip().upper()
+    key = lab.engine_key_for_code(code)
+    df = load_full_history(symbol, timeframe, extended_hours=True)
+    if df is None:
+        df = _FRAMES.get((symbol, timeframe))
+    if df is None:
+        return html.Div("טען נתונים קודם.", className="run-error")
+    df, range_label = lab.slice_range(df, "all" if bt_range == "chart" else bt_range, None)
+    overrides = lab.code_overrides(code)
+    overrides.update({id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+                      for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")})
+    common = dict(cash=float(account_value or 100_000), size=float(contracts or 1), multiplier=float(multiplier or 1),
+                  market_order=(order_type != "Limit"))
+    return results.cost_sensitivity_view(lab.cost_sensitivity(key, df, common, overrides), symbol, timeframe, range_label)
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)

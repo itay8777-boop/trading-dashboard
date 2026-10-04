@@ -215,6 +215,8 @@ def _tick(s: dict, first: bool) -> None:
     tr = stats["_trades"]
     tr = tr[tr["EntryTime"] > start_bar] if len(tr) else tr
     last_close = float(df["Close"].iloc[-1])
+    bar_now = live.get_live_bar(symbol, tf)
+    seen_price = float(bar_now["close"]) if bar_now else last_close   # המחיר שרואים ברגע הזיהוי
     with _lock:
         known = {t["entry_time"]: t for t in s["trades"]}
         for _, r in tr.iterrows():
@@ -224,7 +226,9 @@ def _tick(s: dict, first: bool) -> None:
             if rec is None:
                 rec = {"id": len(s["trades"]) + 1, "side": "long" if r["Size"] > 0 else "short",
                        "entry_time": et, "entry_price": float(r["EntryPrice"]), "size": float(abs(r["Size"])),
-                       "exit_time": None, "exit_price": None, "pnl": None, "status": "open", "unrealized": 0.0}
+                       "exit_time": None, "exit_price": None, "pnl": None, "status": "open", "unrealized": 0.0,
+                       # מדידת הפער: מה הבקטסט הניח (פתיחת הנר הבא + סליפג') מול המחיר החי ברגע הזיהוי
+                       "seen_price": seen_price, "detected_at": _now()}
                 s["trades"].append(rec); known[et] = rec
                 _log(s, f"כניסה {'לונג' if rec['side']=='long' else 'שורט'} ב-{rec['entry_price']:,.2f} ({pd.Timestamp(et):%d/%m %H:%M})")
             if rec["status"] == "open" and not forced:
@@ -253,9 +257,17 @@ def session_summary(s: dict) -> dict:
     open_ = [t for t in s["trades"] if t["status"] == "open"]
     net = sum(t["pnl"] for t in closed)
     wins = sum(1 for t in closed if t["pnl"] > 0)
+    # פער ממוצע (נקודות, נגדנו = חיובי) בין המחיר החי בזיהוי לבין המילוי שהבקטסט הניח
+    gaps = []
+    for t in s["trades"]:
+        sp = t.get("seen_price")
+        if sp is None:
+            continue
+        gaps.append((t["entry_price"] - sp) if t["side"] == "long" else (sp - t["entry_price"]))
     return {"closed": len(closed), "open": len(open_), "net": net,
             "win_rate": (wins / len(closed) * 100) if closed else 0.0,
-            "unrealized": sum(t["unrealized"] for t in open_)}
+            "unrealized": sum(t["unrealized"] for t in open_),
+            "fill_gap_pts": (sum(gaps) / len(gaps)) if gaps else None, "fill_gap_n": len(gaps)}
 
 
 _load()
