@@ -219,7 +219,8 @@ def run_fast_sma_crossover_backtest(df: pd.DataFrame, *, cash: float = 100_000.0
                                     slippage_ticks: float = 0.0,
                                     commission_per_contract: float = 0.0,
                                     market_order: bool = True,
-                                    tick_size: float = MNQ_TICK_SIZE) -> dict:
+                                    tick_size: float = MNQ_TICK_SIZE,
+                                    exit_slippage_ticks: float | None = None, fill_mode: str = "realistic") -> dict:
     """מנוע וקטורי (numpy/pandas) מיוחד לאסטרטגיית חציית SMA20 - לא לולאת בר-אחר-בר
     כמו run_backtest/backtesting.py. משמש את "Full backtest" (2.5 מיליון ברים):
     profiling מדד ש-backtesting.py, בגלל חשבונאות פר-בר (הזמנות/מרווח/equity),
@@ -464,7 +465,8 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
                             rsi_overbought: float = 70.0,
                             hammer_ratio: float = 2.0,
                             stop_loss_pts: float = 50.0,
-                            take_profit_pts: float = 100.0) -> dict:
+                            take_profit_pts: float = 100.0,
+                            exit_slippage_ticks: float | None = None, fill_mode: str = "realistic") -> dict:
     """היפוך-מגמה וקטורי (long *ו-*short, בניגוד ל-run_fast_sma_crossover_backtest
     שהוא long-only): נר פטיש/פטיש-הפוך מסונן ע"י קיצון RSI. יציאה בסטופ-לוס/
     טייק-פרופיט - הראשון שנוגע בו high/low בפועל של הבר, לא רק close.
@@ -543,10 +545,16 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
     # סליפג' רק על הכניסה (הזמנת Market) - בדיוק כמו run_fast_sma_crossover_backtest;
     # היציאות עצמן (סטופ/טייק) כבר מוגדרות כמחיר-סף קבוע, לא הזמנת Market.
     slippage_amount = (float(slippage_ticks) * float(tick_size)) if market_order else 0.0
+    mode = fill_mode if fill_mode in FILL_MODES else "realistic"
+    x_slip = slippage_amount if exit_slippage_ticks is None else float(exit_slippage_ticks) * float(tick_size)
+    if mode == "worst":
+        x_slip *= 2.0
+    tp_pad = float(tick_size) if mode == "worst" else 0.0
 
     entry_times, exit_times = [], []
     entry_prices, exit_prices, sizes = [], [], []
     entry_fill_idxs, exit_idxs = [], []
+    sl_out, tp_out = [], []
 
     n_events = len(all_idx)
     i_ptr = 0
@@ -571,10 +579,10 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
         search_high = high[fill_i + 1:]
         search_low = low[fill_i + 1:]
         if is_long:
-            hit_tp = search_high >= tp_level
+            hit_tp = search_high >= tp_level + tp_pad
             hit_sl = search_low <= sl_level
         else:
-            hit_tp = search_low <= tp_level
+            hit_tp = search_low <= tp_level - tp_pad
             hit_sl = search_high >= sl_level
         hit_any = hit_tp | hit_sl
 
@@ -582,14 +590,17 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
             # לא נסגר עד סוף הדאטה - סוגרים על הסגירה האחרונה הידועה (כמו
             # backtesting.py: פוזיציה פתוחה בסוף הריצה נסגרת, לא נעלמת).
             exit_i = n - 1
-            exit_price = float(close[exit_i])
+            exit_price = _exit_fill(is_long=is_long, kind="forced", level=float(close[exit_i]), bar_open=float(open_[exit_i]),
+                                    bar_close=float(close[exit_i]), slip=x_slip, mode=mode)
         else:
             rel = int(np.argmax(hit_any))
             exit_i = fill_i + 1 + rel
             # שני הרמות נחצו באותו בר - מניחים תרחיש פסימי (סטופ) כברירת מחדל
             # שמרנית, כי לא ידוע איזה מהם נגע קודם בפועל בתוך הבר.
             sl_hit_here = low[exit_i] <= sl_level if is_long else high[exit_i] >= sl_level
-            exit_price = sl_level if sl_hit_here else tp_level
+            kind = "sl" if sl_hit_here else "tp"
+            exit_price = _exit_fill(is_long=is_long, kind=kind, level=(sl_level if kind == "sl" else tp_level),
+                                    bar_open=float(open_[exit_i]), bar_close=float(close[exit_i]), slip=x_slip, mode=mode)
 
         entry_times.append(times[fill_i])
         exit_times.append(times[exit_i])
@@ -598,6 +609,7 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
         sizes.append(size if is_long else -size)
         entry_fill_idxs.append(fill_i)
         exit_idxs.append(exit_i)
+        sl_out.append(sl_level); tp_out.append(tp_level)
 
         # מדלגים לאירוע-הכניסה הבא *אחרי* שהעסקה הזו נסגרה - בלעדיות (לא
         # חופפות), בדיוק כמו exclusive_orders=True.
@@ -663,6 +675,8 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
         "PnL": pnl,
         "ReturnPct": return_frac,
     })
+    if len(sl_out) == n_trades:
+        trades_df["SL"] = np.asarray(sl_out, dtype=float); trades_df["TP"] = np.asarray(tp_out, dtype=float)
 
     return {
         "Equity Final [$]": equity_final,
@@ -762,7 +776,8 @@ def run_fib_golden_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
                             rsi_short_min: float = 55.0,
                             candle_confirm: bool = True,
                             ema_trend: int = 200,
-                            allow_short: bool = True) -> dict:
+                            allow_short: bool = True,
+                            exit_slippage_ticks: float | None = None, fill_mode: str = "realistic") -> dict:
     """ראו ההסבר בראש הקטע (fib_golden). מחזיר את אותו מבנה תוצאה בדיוק כמו
     run_hammer_rsi_backtest, כך שכל הממשק (Key Stats / Performance / Trades /
     markers) עובד בלי שינוי."""
@@ -836,6 +851,11 @@ def run_fib_golden_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
     is_long_arr = is_long_arr[order]
 
     slippage_amount = (float(slippage_ticks) * float(tick_size)) if market_order else 0.0
+    mode = fill_mode if fill_mode in FILL_MODES else "realistic"
+    x_slip = slippage_amount if exit_slippage_ticks is None else float(exit_slippage_ticks) * float(tick_size)
+    if mode == "worst":
+        x_slip *= 2.0
+    tp_pad = float(tick_size) if mode == "worst" else 0.0
 
     entry_times, exit_times = [], []
     entry_prices, exit_prices, sizes = [], [], []
@@ -864,7 +884,7 @@ def run_fib_golden_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
             if not (sl_level < entry_price < tp_level):
                 i_ptr += 1
                 continue  # הפתיחה כבר מעבר לסטופ/ליעד - אין עסקה הגיונית
-            hit_tp = high[fill_i + 1:] >= tp_level
+            hit_tp = high[fill_i + 1:] >= tp_level + tp_pad
             hit_sl = low[fill_i + 1:] <= sl_level
         else:
             sl_level = float(short_stop_lvl[sig_i])
@@ -872,18 +892,21 @@ def run_fib_golden_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
             if not (tp_level < entry_price < sl_level):
                 i_ptr += 1
                 continue
-            hit_tp = low[fill_i + 1:] <= tp_level
+            hit_tp = low[fill_i + 1:] <= tp_level - tp_pad
             hit_sl = high[fill_i + 1:] >= sl_level
         hit_any = hit_tp | hit_sl
 
         if not hit_any.any():
             exit_i = n - 1
-            exit_price = float(close[exit_i])
+            exit_price = _exit_fill(is_long=is_long, kind="forced", level=float(close[exit_i]), bar_open=float(open_[exit_i]),
+                                    bar_close=float(close[exit_i]), slip=x_slip, mode=mode)
         else:
             rel = int(np.argmax(hit_any))
             exit_i = fill_i + 1 + rel
-            sl_hit_here = low[exit_i] <= sl_level if is_long else high[exit_i] >= sl_level
-            exit_price = sl_level if sl_hit_here else tp_level   # שני הצדדים באותו בר: פסימי
+            sl_hit_here = low[exit_i] <= sl_level if is_long else high[exit_i] >= sl_level   # שני הצדדים באותו בר: פסימי
+            kind = "sl" if sl_hit_here else "tp"
+            exit_price = _exit_fill(is_long=is_long, kind=kind, level=(sl_level if kind == "sl" else tp_level),
+                                    bar_open=float(open_[exit_i]), bar_close=float(close[exit_i]), slip=x_slip, mode=mode)
 
         used_legs.add(leg_key)
         entry_times.append(times[fill_i])
@@ -1007,6 +1030,36 @@ def _hhmm(text, default: int) -> int:
         return default
 
 
+# מודל מילוי ליציאות: מצבים
+#   optimistic  - המודל הישן: סטופ/יעד מתמלאים בדיוק ברמה, בלי סליפג' ביציאה.
+#   realistic   - (ברירת מחדל) סטופ = פקודת שוק: סליפג' ביציאה + פער דרך הסטופ מתמלא בפתיחת הנר;
+#                 יעד = פקודת לימיט: מתמלא ברמה (או בפתיחה אם הנר נפתח מעבר לה, לטובתנו); יציאה
+#                 כפויה (זמן/סוף דאטה) = שוק: סגירה פחות סליפג'.
+#   worst       - כמו realistic אבל סליפג' כפול, והיעד דורש חדירה של טיק מעבר לרמה (לא רק נגיעה).
+FILL_MODES = ("optimistic", "realistic", "worst")
+
+
+def _exit_fill(*, is_long: bool, kind: str, level: float, bar_open: float, bar_close: float,
+               slip: float, mode: str) -> float:
+    """מחיר יציאה בפועל. kind: 'sl' | 'tp' | 'forced'."""
+    if mode == "optimistic":
+        return float(level if kind != "forced" else bar_close)
+    if kind == "tp":
+        # לימיט: אם הנר נפתח כבר מעבר ליעד, מתמלא בפתיחה (טוב יותר); אחרת ברמה
+        if is_long:
+            return float(max(level, bar_open)) if bar_open > level else float(level)
+        return float(min(level, bar_open)) if bar_open < level else float(level)
+    if kind == "sl":
+        # שוק: פער דרך הסטופ -> פתיחה; ואז סליפג' נגדנו
+        if is_long:
+            base = min(level, bar_open) if bar_open < level else level
+            return float(base - slip)
+        base = max(level, bar_open) if bar_open > level else level
+        return float(base + slip)
+    # forced (זמן / סוף דאטה): שוק בסגירה
+    return float(bar_close - slip) if is_long else float(bar_close + slip)
+
+
 def _simulate_signed_signals(*, times, open_, high, low, close, n,
                              sig_idx: np.ndarray, sig_is_long: np.ndarray,
                              sl_levels: np.ndarray, tp_levels: np.ndarray,
@@ -1015,7 +1068,9 @@ def _simulate_signed_signals(*, times, open_, high, low, close, n,
                              size: float, slippage_amount: float,
                              cash: float, multiplier: float,
                              commission_per_contract: float,
-                             extras: list | None = None) -> dict:
+                             extras: list | None = None,
+                             exit_slippage_amount: float | None = None, fill_mode: str = "realistic",
+                             tick_size: float = MNQ_TICK_SIZE) -> dict:
     """הלב המשותף של המנועים המהירים: לכל אות (ממוין בזמן) מילוי בפתיחת הבר
     הבא, ואז חיפוש וקטורי של הבר הראשון שנוגע בסטופ/יעד (או יציאה כפויה ב-
     max_exit_idx - למשל סוף הסשן). עסקאות בלעדיות; dedupe_key (למשל תאריך)
@@ -1029,6 +1084,11 @@ def _simulate_signed_signals(*, times, open_, high, low, close, n,
         dedupe_key = dedupe_key[order]
     if extras is not None:
         extras = [extras[k] for k in order]
+    mode = fill_mode if fill_mode in FILL_MODES else "realistic"
+    x_slip = slippage_amount if exit_slippage_amount is None else float(exit_slippage_amount)
+    if mode == "worst":
+        x_slip *= 2.0
+    tp_pad = float(tick_size) if mode == "worst" else 0.0   # היעד חייב להיחצות, לא רק להיגע
 
     entry_times, exit_times = [], []
     entry_prices, exit_prices, sizes = [], [], []
@@ -1058,18 +1118,21 @@ def _simulate_signed_signals(*, times, open_, high, low, close, n,
         seg_hi = high[fill_i + 1:last_i + 1]
         seg_lo = low[fill_i + 1:last_i + 1]
         if is_long:
-            hit_tp, hit_sl = seg_hi >= tp_level, seg_lo <= sl_level
+            hit_tp, hit_sl = seg_hi >= tp_level + tp_pad, seg_lo <= sl_level
         else:
-            hit_tp, hit_sl = seg_lo <= tp_level, seg_hi >= sl_level
+            hit_tp, hit_sl = seg_lo <= tp_level - tp_pad, seg_hi >= sl_level
         hit_any = hit_tp | hit_sl
         if hit_any.size and hit_any.any():
             rel = int(np.argmax(hit_any))
             exit_i = fill_i + 1 + rel
             sl_hit_here = low[exit_i] <= sl_level if is_long else high[exit_i] >= sl_level
-            exit_price = sl_level if sl_hit_here else tp_level
+            kind = "sl" if sl_hit_here else "tp"
+            exit_price = _exit_fill(is_long=is_long, kind=kind, level=(sl_level if kind == "sl" else tp_level),
+                                    bar_open=float(open_[exit_i]), bar_close=float(close[exit_i]), slip=x_slip, mode=mode)
         else:
-            exit_i = max(fill_i, last_i)     # יציאה כפויה (סוף סשן / סוף דאטה) בסגירה
-            exit_price = float(close[exit_i])
+            exit_i = max(fill_i, last_i)     # יציאה כפויה (סוף סשן / סוף דאטה)
+            exit_price = _exit_fill(is_long=is_long, kind="forced", level=float(close[exit_i]),
+                                    bar_open=float(open_[exit_i]), bar_close=float(close[exit_i]), slip=x_slip, mode=mode)
         if key is not None:
             used.add(key)
         entry_times.append(times[fill_i]); exit_times.append(times[exit_i])
@@ -1123,7 +1186,8 @@ def run_orb_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: float =
                      target_rr: float = 2.0, min_range_pts: float = 20.0,
                      max_range_pts: float = 200.0, last_entry_min: int = 180,
                      allow_short: bool = True,
-                     session_open: str = "09:30", exit_time: str = "15:55") -> dict:
+                     session_open: str = "09:30", exit_time: str = "15:55",
+                         exit_slippage_ticks: float | None = None, fill_mode: str = "realistic") -> dict:
     if df is None or len(df) < 50:
         raise StrategyCompileError("אין מספיק נרות להרצה")
     print(f"Backtest starting on {len(df)} bars from {df.index[0]} to {df.index[-1]}", flush=True)
@@ -1179,6 +1243,8 @@ def run_orb_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: float =
         max_exit_idx=day_exit_idx[sig_idx], dedupe_key=day_codes[sig_idx],
         size=size, slippage_amount=slippage_amount, cash=cash, multiplier=multiplier,
         commission_per_contract=commission_per_contract, extras=extras,
+        exit_slippage_amount=(None if exit_slippage_ticks is None else float(exit_slippage_ticks) * float(tick_size)),
+        fill_mode=fill_mode, tick_size=tick_size,
     )
 
 
@@ -1210,7 +1276,8 @@ def run_vwap_revert_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size:
                              rsi_long_max: float = 30.0, rsi_short_min: float = 70.0,
                              stop_pts: float = 30.0, rth_only: bool = True,
                              allow_short: bool = True,
-                             session_open: str = "09:30", exit_time: str = "15:55") -> dict:
+                             session_open: str = "09:30", exit_time: str = "15:55",
+                         exit_slippage_ticks: float | None = None, fill_mode: str = "realistic") -> dict:
     if df is None or len(df) < 50:
         raise StrategyCompileError("אין מספיק נרות להרצה")
     print(f"Backtest starting on {len(df)} bars from {df.index[0]} to {df.index[-1]}", flush=True)
@@ -1251,6 +1318,8 @@ def run_vwap_revert_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size:
         max_exit_idx=None if max_exit is None else max_exit[sig_idx], dedupe_key=None,
         size=size, slippage_amount=slippage_amount, cash=cash, multiplier=multiplier,
         commission_per_contract=commission_per_contract,
+        exit_slippage_amount=(None if exit_slippage_ticks is None else float(exit_slippage_ticks) * float(tick_size)),
+        fill_mode=fill_mode, tick_size=tick_size,
     )
 
 
@@ -1299,7 +1368,8 @@ def run_wyckoff_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: flo
                          range_bars: int = 40, range_atr_mult: float = 6.0, spring_pen_pts: float = 5.0,
                          vol_max_ratio: float = 1.2, confirm_next: bool = True, target_frac: float = 1.0,
                          stop_buffer_pts: float = 8.0, max_bars: int = 120, ema_trend: int = 0,
-                         allow_short: bool = True) -> dict:
+                         allow_short: bool = True,
+                         exit_slippage_ticks: float | None = None, fill_mode: str = "realistic") -> dict:
     range_bars = max(5, int(range_bars))
     if df is None or len(df) < range_bars + 30:
         raise StrategyCompileError("אין מספיק נרות להרצה")
@@ -1362,6 +1432,8 @@ def run_wyckoff_backtest(df: pd.DataFrame, *, cash: float = 100_000.0, size: flo
         max_exit_idx=max_exit, dedupe_key=dedupe,
         size=size, slippage_amount=slippage_amount, cash=cash, multiplier=multiplier,
         commission_per_contract=commission_per_contract, extras=extras,
+        exit_slippage_amount=(None if exit_slippage_ticks is None else float(exit_slippage_ticks) * float(tick_size)),
+        fill_mode=fill_mode, tick_size=tick_size,
     )
 
 

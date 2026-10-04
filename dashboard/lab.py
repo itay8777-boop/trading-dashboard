@@ -139,7 +139,11 @@ def build_kwargs(key: str, overrides: dict) -> dict:
 
 
 def run_engine(key: str, df: pd.DataFrame, common: dict, overrides: dict) -> dict:
-    return ENGINES[key]["runner"](df, **common, **build_kwargs(key, overrides))
+    import inspect
+    runner = ENGINES[key]["runner"]
+    params = inspect.signature(runner).parameters
+    common = {k: v for k, v in common.items() if k in params}
+    return runner(df, **common, **build_kwargs(key, overrides))
 
 
 def code_overrides(code: str) -> dict:

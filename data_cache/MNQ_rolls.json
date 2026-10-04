@@ -1,0 +1,239 @@
+{
+ "symbol": "MNQ",
+ "method": "volume-switch per day (import_databento.stitch_continuous); basis = median(new-old close) over common bars on switch day and day before",
+ "rolls": [
+  {
+   "date": "2019-06-16",
+   "old": "MNQM9",
+   "new": "MNQU9",
+   "basis": 26.5,
+   "n_common": 194,
+   "old_close": 7511.25
+  },
+  {
+   "date": "2019-09-13",
+   "old": "MNQU9",
+   "new": "MNQZ9",
+   "basis": 20.75,
+   "n_common": 1601,
+   "old_close": 7887.75
+  },
+  {
+   "date": "2019-12-13",
+   "old": "MNQZ9",
+   "new": "MNQH0",
+   "basis": 25.5,
+   "n_common": 1817,
+   "old_close": 8494.0
+  },
+  {
+   "date": "2020-03-13",
+   "old": "MNQH0",
+   "new": "MNQM0",
+   "basis": -15.25,
+   "n_common": 1931,
+   "old_close": 7821.0
+  },
+  {
+   "date": "2020-06-14",
+   "old": "MNQM0",
+   "new": "MNQU0",
+   "basis": -13.0,
+   "n_common": 360,
+   "old_close": 9578.0
+  },
+  {
+   "date": "2020-09-13",
+   "old": "MNQU0",
+   "new": "MNQZ0",
+   "basis": -13.0,
+   "n_common": 360,
+   "old_close": 11223.25
+  },
+  {
+   "date": "2020-12-11",
+   "old": "MNQZ0",
+   "new": "MNQH1",
+   "basis": -1.25,
+   "n_common": 2327,
+   "old_close": 12368.25
+  },
+  {
+   "date": "2021-03-12",
+   "old": "MNQH1",
+   "new": "MNQM1",
+   "basis": -9.0,
+   "n_common": 2354,
+   "old_close": 12934.25
+  },
+  {
+   "date": "2021-06-11",
+   "old": "MNQM1",
+   "new": "MNQU1",
+   "basis": -8.5,
+   "n_common": 2258,
+   "old_close": 13993.25
+  },
+  {
+   "date": "2021-09-10",
+   "old": "MNQU1",
+   "new": "MNQZ1",
+   "basis": -8.25,
+   "n_common": 2396,
+   "old_close": 15443.5
+  },
+  {
+   "date": "2021-12-10",
+   "old": "MNQZ1",
+   "new": "MNQH2",
+   "basis": 2.5,
+   "n_common": 2400,
+   "old_close": 16318.25
+  },
+  {
+   "date": "2022-03-13",
+   "old": "MNQH2",
+   "new": "MNQM2",
+   "basis": -5.0,
+   "n_common": 360,
+   "old_close": 13314.25
+  },
+  {
+   "date": "2022-06-12",
+   "old": "MNQM2",
+   "new": "MNQU2",
+   "basis": 25.5,
+   "n_common": 360,
+   "old_close": 11623.5
+  },
+  {
+   "date": "2022-09-12",
+   "old": "MNQU2",
+   "new": "MNQZ2",
+   "basis": 78.5,
+   "n_common": 1740,
+   "old_close": 12754.25
+  },
+  {
+   "date": "2022-12-12",
+   "old": "MNQZ2",
+   "new": "MNQH3",
+   "basis": 115.25,
+   "n_common": 1739,
+   "old_close": 11697.75
+  },
+  {
+   "date": "2023-03-12",
+   "old": "MNQH3",
+   "new": "MNQM3",
+   "basis": 125.5,
+   "n_common": 360,
+   "old_close": 12050.0
+  },
+  {
+   "date": "2023-06-11",
+   "old": "MNQM3",
+   "new": "MNQU3",
+   "basis": 177.5,
+   "n_common": 360,
+   "old_close": 14588.5
+  },
+  {
+   "date": "2023-09-11",
+   "old": "MNQU3",
+   "new": "MNQZ3",
+   "basis": 197.5,
+   "n_common": 1740,
+   "old_close": 15471.25
+  },
+  {
+   "date": "2023-12-11",
+   "old": "MNQZ3",
+   "new": "MNQH4",
+   "basis": 211.5,
+   "n_common": 1740,
+   "old_close": 16254.5
+  },
+  {
+   "date": "2024-03-11",
+   "old": "MNQH4",
+   "new": "MNQM4",
+   "basis": 246.75,
+   "n_common": 1740,
+   "old_close": 18053.25
+  },
+  {
+   "date": "2024-06-17",
+   "old": "MNQM4",
+   "new": "MNQU4",
+   "basis": 264.25,
+   "n_common": 1740,
+   "old_close": 19914.0
+  },
+  {
+   "date": "2024-09-16",
+   "old": "MNQU4",
+   "new": "MNQZ4",
+   "basis": 235.5,
+   "n_common": 1740,
+   "old_close": 19415.75
+  },
+  {
+   "date": "2024-12-17",
+   "old": "MNQZ4",
+   "new": "MNQH5",
+   "basis": 299.0,
+   "n_common": 2759,
+   "old_close": 22034.5
+  },
+  {
+   "date": "2025-03-18",
+   "old": "MNQH5",
+   "new": "MNQM5",
+   "basis": 207.75,
+   "n_common": 2760,
+   "old_close": 19557.25
+  },
+  {
+   "date": "2025-06-16",
+   "old": "MNQM5",
+   "new": "MNQU5",
+   "basis": 222.75,
+   "n_common": 1740,
+   "old_close": 21853.0
+  },
+  {
+   "date": "2025-09-15",
+   "old": "MNQU5",
+   "new": "MNQZ5",
+   "basis": 241.0,
+   "n_common": 1740,
+   "old_close": 24342.75
+  },
+  {
+   "date": "2025-12-15",
+   "old": "MNQZ5",
+   "new": "MNQH6",
+   "basis": 255.0,
+   "n_common": 1740,
+   "old_close": 24916.75
+  },
+  {
+   "date": "2026-03-16",
+   "old": "MNQH6",
+   "new": "MNQM6",
+   "basis": 213.5,
+   "n_common": 1740,
+   "old_close": 24579.25
+  },
+  {
+   "date": "2026-06-14",
+   "old": "MNQM6",
+   "new": "MNQU6",
+   "basis": 298.0,
+   "n_common": 360,
+   "old_close": 30187.5
+  }
+ ],
+ "adjusted": false
+}

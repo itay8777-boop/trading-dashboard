@@ -111,13 +111,24 @@ def kpi_tiles(stats: dict, cash: float, bh_pct: float | None = None) -> html.Div
         ("משך עסקה ממוצע", _dur_text(m["avg_dur"]), "neu", f"הטובה {money(m['best'])} · הגרועה {money(m['worst'])}"),
         ("קנה והחזק", pct(bh), _cls(bh), "לאותה תקופה"),
     ]
-    return html.Div(className="kpi-grid", children=[
+    grid = html.Div(className="kpi-grid", children=[
         html.Div(className=f"kpi {cls}", children=[
             html.Div(label, className="kpi-label"),
             html.Div(value, className="kpi-value"),
             html.Div(sub, className="kpi-sub"),
         ]) for label, value, cls, sub in tiles
     ])
+    # בדיקת "ההון נגמר": ההון המינימלי לאורך הדרך מול מרווח הביטחון (MNQ ≈ 2,500$ לחוזה)
+    warn = None
+    if m["n"]:
+        o = tr.sort_values("ExitTime"); eq_min = float(cash + np.cumsum(o["PnL"].to_numpy(dtype=float)).min())
+        contracts = float(abs(tr["Size"]).max()) if len(tr) else 1.0
+        maint = 2500.0 * contracts
+        if eq_min <= 0:
+            warn = f"ההון ירד מתחת לאפס במהלך הבדיקה (מינימום {money(eq_min)}). התוצאות אחרי הנקודה הזו לא היו קורות בחשבון אמיתי."
+        elif eq_min < maint:
+            warn = f"ההון ירד ל-{money(eq_min)}, מתחת למרווח הביטחון המשוער ({money(maint)} ל-{contracts:g} חוזים). בחשבון אמיתי היו נסגרות פוזיציות."
+    return html.Div([grid, html.Div(f"⚠ {warn}", className="tester-error")] if warn else [grid])
 
 
 # ------------------------------------------------------------------ סקירה: עקומת הון + drawdown

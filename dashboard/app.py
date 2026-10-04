@@ -21,7 +21,7 @@ from dash import ALL, Dash, Input, Output, State, callback, callback_context, dc
 # ולא ל-dashboard/chart.py שנטען כ-`.chart`.
 from chart import _evenly_sampled_indices, build_performance_chart
 
-from . import lab, live, panels, paper, results
+from . import audit, lab, live, panels, paper, results
 from .chart import build_history_chunk_payload, build_live_bar_payload, build_payload
 from .data import (
     from_display_epoch,
@@ -550,8 +550,20 @@ def build_layout() -> html.Div:
                             ]),
                             html.Div(className="settings-field", children=[
                                 html.Span("עמלה לחוזה ($)", className="ctl-label"),
-                                dcc.Input(id="settings-commission-input", type="number", value=0,
-                                          min=0, step=0.01, className="num-input tiny", debounce=True),
+                                dcc.Input(id="settings-commission-input", type="number", value=0.75,
+                                          min=0, step=0.01, className="num-input tiny", debounce=True,
+                                          title="לצד, כולל עמלות בורסה. MNQ ב-IB: בערך 0.75$"),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("סליפג' ביציאה בסטופ (טיקים)", className="ctl-label"),
+                                dcc.Input(id="exit-slippage-input", type="number", value=3, min=0, step=1,
+                                          className="num-input tiny", debounce=True, title="סטופ הוא פקודת שוק בתנועה: מחליק יותר מהכניסה"),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("מודל מילוי", className="ctl-label"),
+                                dcc.Dropdown(id="fill-mode-input", className="settings-dropdown", clearable=False, searchable=False, value="realistic",
+                                             options=[{"label": "ריאלי", "value": "realistic"}, {"label": "תרחיש גרוע", "value": "worst"},
+                                                      {"label": "אופטימי (ישן)", "value": "optimistic"}]),
                             ]),
                             html.Div(className="settings-field", children=[
                                 html.Span("סוג פקודה", className="ctl-label"),
@@ -575,7 +587,17 @@ def build_layout() -> html.Div:
                             dcc.Tab(label="ספריית אסטרטגיות", value="catalog", className="rtab", selected_className="rtab-sel"),
                             dcc.Tab(label="קוד", value="editor", className="rtab", selected_className="rtab-sel"),
                             dcc.Tab(label="הגדרות חשבון", value="settings", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="ביקורת נתונים", value="audit", className="rtab", selected_className="rtab-sel"),
                         ]),
+                    ]),
+                    html.Div(id="audit-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        html.Div(className="pane-head", children=[
+                            html.Div("ביקורת נתונים", className="pane-title"),
+                            html.Div("מה הבקטסט באמת רץ עליו: תקינות קאש הדקה, פערים, קפיצות, וגלגולי חוזים. "
+                                     "ביקורת על 2.5 מיליון נרות לוקחת כמה שניות.", className="pane-sub"),
+                        ]),
+                        html.Button("▶  הרץ ביקורת על הסימבול הנוכחי", id="audit-run-btn", n_clicks=0, className="run-btn"),
+                        dcc.Loading(html.Div(id="audit-body", style={"marginTop": "12px"}), type="dot", color="#2962FF"),
                     ]),
                     html.Div(id="catalog-pane", style={"display": "none"}, className="rtl-pane",
                              children=_catalog_children()),
@@ -1013,6 +1035,7 @@ def toggle_panel(_n, is_open):
     Output("history-pane", "style"),
     Output("paper-pane", "style"),
     Output("more-pane", "style"),
+    Output("audit-pane", "style"),
     Input("panel-tabs", "value"), Input("more-tabs", "value"),
 )
 def switch_panel_tab(tab, more):
@@ -1027,6 +1050,7 @@ def switch_panel_tab(tab, more):
         show if tab == "history" else hide,
         show if tab == "paper" else hide,
         show if in_more else hide,
+        show if (in_more and more == "audit") else hide,
     )
 
 
@@ -1190,6 +1214,7 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
             slippage_ticks=float(slippage_ticks or 0),
             commission_per_contract=float(commission_per_contract or 0),
             market_order=(order_type != "Limit"),
+            exit_slippage_ticks=float(_RESULTS.get("exit_slip", 3)), fill_mode=_RESULTS.get("fill_mode", "realistic"),
         )
         try:
             stats = lab.run_engine(builtin_key, df_backtest, common_kwargs, strategy_overrides)
@@ -1365,7 +1390,8 @@ def run_optimizer(n_clicks, code, symbol, timeframe, account_value, contracts, m
     })
     common = dict(cash=float(account_value or 100_000), size=float(contracts or 1),
                   multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
-                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"))
+                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"),
+                  exit_slippage_ticks=float(_RESULTS.get("exit_slip", 3)), fill_mode=_RESULTS.get("fill_mode", "realistic"))
     res = lab.optimize(key, df, common, overrides, grid)
     rows = res["rows"]
     if not rows:
@@ -1619,7 +1645,8 @@ def run_walk_forward(n_clicks, code, symbol, timeframe, account_value, contracts
                       for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")})
     common = dict(cash=float(account_value or 100_000), size=float(contracts or 1),
                   multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
-                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"))
+                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"),
+                  exit_slippage_ticks=float(_RESULTS.get("exit_slip", 3)), fill_mode=_RESULTS.get("fill_mode", "realistic"))
     wf = lab.walk_forward(key, df, common, overrides, grid, n_windows=int(n_windows or 5), rank_by=rank_by or "net")
     _RESULTS["wf"] = [{"train_from": w["train_from"], "train_to": w["train_to"], "test_from": w["test_from"], "test_to": w["test_to"]}
                       for w in wf["windows"]]
@@ -1648,7 +1675,8 @@ def paper_start(n, code, symbol, timeframe, account_value, contracts, multiplier
                    for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")})
     common = dict(cash=float(account_value or 100_000), size=float(contracts or 1),
                   multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
-                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"))
+                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"),
+                  exit_slippage_ticks=float(_RESULTS.get("exit_slip", 3)), fill_mode=_RESULTS.get("fill_mode", "realistic"))
     s = paper.start_session(key=key, symbol=symbol, timeframe=timeframe, params=params, common=common)
     return f"סשן #{s['id']} נפתח ({s['title']} · {s['symbol']} {s['timeframe']}). הבדיקה הראשונה תוך כמה שניות."
 
@@ -1981,6 +2009,20 @@ def load_version(name):
     st = v.get("settings") or {}
     g = lambda k: (st[k] if st.get(k) is not None else no_update)
     return v.get("code", ""), "tester", g("capital"), g("contracts"), g("multiplier"), g("slippage"), g("commission"), {"display": "inline-block"}
+
+
+@callback(Output("fill-mode-input", "className"), Input("exit-slippage-input", "value"), Input("fill-mode-input", "value"))
+def remember_fill_settings(exit_slip, mode):
+    _RESULTS["exit_slip"] = float(exit_slip or 0)
+    _RESULTS["fill_mode"] = mode or "realistic"
+    return "settings-dropdown"
+
+
+@callback(Output("audit-body", "children"), Input("audit-run-btn", "n_clicks"), State("symbol-input", "value"), prevent_initial_call=True)
+def run_audit(n, symbol):
+    if not n:
+        return no_update
+    return audit.audit_view(audit.audit_cache((symbol or "MNQ").strip().upper()))
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)
