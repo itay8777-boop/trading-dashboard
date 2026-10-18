@@ -1,0 +1,15 @@
+{
+  "strategies": [
+    {
+      "name": "hammer std",
+      "code": "# strategy: hammer_breakout\n# Signal candle sets a breakout trigger = signal bar's high + 1 tick.\n# Signal shape - EITHER of two bullish-reversal patterns qualifies:\n#   Type 1 (classic hammer): upper_wick <= 10% of range AND\n#     lower_wick >= 60% of range AND close >= open AND body > 0.\n#   Type 2 (bullish strong candle): close >= open AND body >= 40% of range\n#     AND lower_wick >= 20% of range AND upper_wick <= 15% of range.\n# Extra filters - must hold on top of the shape match:\n#   abs(close-open) <= MAX_BODY_PTS on the signal candle itself (applies to\n#   both Type 1 and Type 2), AND the standard deviation of the 20 closes\n#   strictly before the signal candle must be >= MIN_STD_BEFORE (entry\n#   quality filter only - skip signals that form after an unusually quiet\n#   stretch), AND - if EXCLUDE_OPEN_HOURS is on - the signal candle must NOT\n#   fall in the 09:00-11:00 ET window (skip the open-volatility whipsaw\n#   hours).\n# Long entry: only if the very next bar's high crosses above the trigger\n#             AND that same bar's close is also above the trigger (a wick\n#             through the level that closes back below it doesn't count) -\n#             single-bar stop order, not an open-ended wait. Fill price is\n#             the trigger itself, not the next bar's open.\n# Exit - two conditions, whichever comes first:\n#   1. Stop Loss: price drops STOP_LOSS_PTS below entry price.\n#   2. SMA20 Distance Exit: on every bar after entry, distance = close -\n#      SMA20 (20-bar rolling mean of Close) is tracked. Once distance has\n#      reached at least PEAK_DISTANCE_PTS above SMA20 at any point since\n#      entry (stays armed for the rest of the trade), exit at the close of\n#      the first subsequent bar where distance drops back below\n#      EXIT_DISTANCE_PTS.\nSTOP_LOSS_PTS = 5             # input\nMAX_BODY_PTS = 7              # input\nMIN_STD_BEFORE = 20           # input\nEXCLUDE_OPEN_HOURS = False    # input\nPEAK_DISTANCE_PTS = 30        # input\nEXIT_DISTANCE_PTS = 5         # input\n",
+      "settings": {
+        "capital": 100000,
+        "contracts": 1,
+        "multiplier": 2,
+        "slippage": 2,
+        "commission": 0.25
+      }
+    }
+  ]
+}

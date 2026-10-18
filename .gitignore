@@ -32,7 +32,6 @@ databento_data/
 static/plotly.min.js
 
 # --- Runtime/user state (regenerated at runtime, not source) ---
-strategies.json
 
 # --- Secrets (none should ever exist in this repo, but guard anyway) ---
 .env
