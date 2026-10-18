@@ -45,6 +45,27 @@ def load_dbn(path: Path) -> pd.DataFrame:
     return df
 
 
+# קודי חודש פקיעה של חוזים עתידיים ב-CME (F=ינואר ... Z=דצמבר).
+_MONTH_CODES = {"F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
+                "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12}
+
+
+def _expiry_key(symbol: str, first_seen: pd.Timestamp) -> tuple[int, int]:
+    """(שנה, חודש) של פקיעת החוזה, מתוך הטיקר: שורש + קוד-חודש + ספרת-שנה בודדת
+    (למשל 'MNQM0' = יוני 2020). ספרת-השנה עצמה דו-משמעית בין עשורים, אז לוקחים את
+    השנה המוקדמת ביותר שמסתיימת באותה ספרה ואינה קודמת לשנה שבה החוזה הופיע לראשונה
+    בדאטה (חוזה לא יכול להופיע אחרי שנת הפקיעה שלו). טיקר שלא מתפרש = שגיאה קולנית,
+    לא דירוג שגוי בשקט."""
+    code, digit = symbol[-2:-1], symbol[-1:]
+    if code not in _MONTH_CODES or not digit.isdigit():
+        raise ValueError(f"לא ניתן לפרש חודש/שנת פקיעה מהסימבול {symbol!r}")
+    for decade in (2010, 2020, 2030):
+        year = decade + int(digit)
+        if year >= first_seen.year:
+            return (year, _MONTH_CODES[code])
+    raise ValueError(f"לא ניתן לקבוע שנת פקיעה לסימבול {symbol!r}")
+
+
 def stitch_continuous(df: pd.DataFrame) -> pd.DataFrame:
     """תופר את כל פקיעות החוזה לסדרה רציפה אחת: מסננים spreads (סימבולים עם '-'),
     ולכל יום בוחרים חוזה "פעיל" יחיד לפי נפח המסחר (roll וולומטרי).
@@ -54,9 +75,16 @@ def stitch_continuous(df: pd.DataFrame) -> pd.DataFrame:
     (יום א' חוזה חדש מוביל בנפח, יום ב' חוזר להוביל הישן) - בדיוק הגורם לקפיצות
     מחיר חוזרות ("קופץ ומהבהב") שראינו בגרף, כי לכל חוזה יש רמת מחיר שונה במקצת
     (basis). התיקון: אוכפים שה"חוזה הפעיל" יכול להתקדם רק *קדימה* בציר הזמן של
-    פקיעות (לפי סדר ההופעה הראשונה של כל חוזה בדאטה עצמו - לא parsing של קוד
-    החודש בטיקר) ולעולם לא חוזר אחורה לחוזה מוקדם יותר, גם אם יום בודד מראה לו
-    נפח גבוה יותר. כל חוזה נבחר לכל היותר פעם אחת, ברצף ימים אחד.
+    פקיעות, ולעולם לא חוזר אחורה לחוזה מוקדם יותר, גם אם יום בודד מראה לו נפח
+    גבוה יותר. כל חוזה נבחר לכל היותר פעם אחת, ברצף ימים אחד.
+
+    תיקון מאוחר יותר: ציר הפקיעות הזה נקבע בעבר לפי סדר ההופעה הראשונה של כל חוזה
+    בדאטה, מתוך ההנחה שזה תמיד זהה לסדר הפקיעות בפועל. ההנחה הייתה שגויה עבור
+    MNQM0 (יוני 2020) ו-MNQH0 (מרץ 2020): יוני נסחר לראשונה שבוע *לפני* מרץ, אז
+    קיבל דירוג נמוך יותר - ובכלל לא הותר כ"חוזה פעיל" אחרי שמרץ נבחר, והסדרה
+    קפצה ישר לספטמבר (MNQU0, כמעט לא נסחר) בין 2020-03-13 ל-2020-06-12. עכשיו
+    הדירוג נגזר מתאריך הפקיעה עצמו (ראו _expiry_key). כל שאר ההיגיון - נבחר
+    החוזה עם הנפח הגבוה ביותר ביום, רק קדימה - נשאר בדיוק כפי שהיה.
     """
     df = df[~df["symbol"].str.contains("-")].copy()
     print(f"אחרי סינון spreads: {len(df):,} שורות, {df['symbol'].nunique()} חוזים בודדים")
@@ -65,10 +93,14 @@ def stitch_continuous(df: pd.DataFrame) -> pd.DataFrame:
     df.index = df.index.tz_convert(SOURCE_TZ).tz_localize(None)
     df["day"] = df.index.date
 
-    # סדר החוזים לפי מועד ההופעה הראשונה שלהם בדאטה - זה תמיד תואם את סדר
-    # הפקיעות בפועל (חוזה מוקדם יותר תמיד מתחיל להיסחר לפני חוזה מאוחר ממנו).
+    # סדר החוזים לפי תאריך הפקיעה שלהם (נגזר מהטיקר) - לא לפי מועד ההופעה
+    # הראשונה בדאטה, שלא תמיד תואם את סדר הפקיעות (MNQM0 הופיע לפני MNQH0).
+    # first_seen משמש רק להכרעת העשור של ספרת-השנה (ראו _expiry_key).
     first_seen = df.groupby("symbol").apply(lambda g: g.index.min(), include_groups=False)
-    contract_rank = {sym: i for i, sym in enumerate(first_seen.sort_values().index)}
+    expiry = {sym: _expiry_key(sym, ts) for sym, ts in first_seen.items()}
+    if len(set(expiry.values())) != len(expiry):
+        raise ValueError("שני סימבולים שונים קיבלו אותה פקיעה - דירוג החוזים אינו חד-משמעי")
+    contract_rank = {sym: i for i, sym in enumerate(sorted(expiry, key=expiry.get))}
 
     daily_volume = (
         df.groupby(["day", "symbol"])["volume"].sum()

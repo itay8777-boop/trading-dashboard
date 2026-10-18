@@ -43,6 +43,7 @@ from .strategy import (
     RECOGNIZED_STRATEGY_INPUTS,
     StrategyCompileError,
     detect_builtin_strategy,
+    compute_daily_overnight_value_areas,
     parse_strategy_inputs,
     run_fast_sma_crossover_backtest,
     run_hammer_rsi_backtest,
@@ -373,6 +374,7 @@ def build_layout() -> html.Div:
                              _indicator_row("vwap", "VWAP", []),
                              _indicator_row("rsi", "RSI", [("length", 14)]),
                              _indicator_row("bb", "Bollinger Bands", [("length", 20), ("std", 2)]),
+                             _indicator_row("overnightva", "Overnight VA Levels", []),
                          ]),
             ]),
             html.Div(className="sep"),
@@ -981,6 +983,54 @@ def api_markers():
 
 
 # ------------------------------------------------------ ספריית אסטרטגיות (Pine Editor)
+@app.server.route("/api/overnight_levels")
+def api_overnight_levels():
+    """נתיב Flask ישיר (כמו /api/lod, /api/markers) לאינדיקטור-התצוגה "Overnight
+    VA Levels" (assets/indicators.js) - תצוגה בלבד, לא מריץ שום אסטרטגיה ולא
+    שולח שום הזמנה. ה-POC/VAH/VAL מחושבים ב-Python (strategy.py:
+    compute_daily_overnight_value_areas - פונקציה נפרדת, לא נוגעת
+    ב-run_overnight_val_reversion_backtest) ולא בצד-הלקוח, כי גבולות ה-RTH
+    (09:30/16:00 ET) הם מושג בשעון ניו-יורק, ואילו candle.time בגרף הוא
+    "UTC מזויף" של שעון ישראל (ראו data.py: DISPLAY_TZ) - שחזור נכון של
+    הגבולות האלה מתוך epoch-התצוגה ב-JS היה דורש להפוך שתי המרות-אזור-זמן
+    תלויות-שעון-קיץ נפרדות (ישראל ו-ארה"ב, עם תאריכי-מעבר שונים), בדיוק סוג
+    הבאג העדין שהפרויקט הזה נזהר ממנו לאורך כל המחקר שקדם לאינדיקטור הזה.
+    קורא תמיד להיסטוריית ה-1m המלאה (load_full_history) - בדיוק כמו
+    שהאסטרטגיה עצמה תמיד רצה על 1m מלא, בלי קשר לטיים-פריים המוצג בגרף.
+    """
+    args = flask.request.args
+    symbol = (args.get("symbol") or "").strip().upper()
+    empty = {"symbol": symbol, "levels": []}
+    if not symbol:
+        return flask.jsonify(empty)
+    try:
+        df = load_full_history(symbol, "1m", extended_hours=True)
+    except DataError:
+        return flask.jsonify(empty)
+    if df is None or df.empty:
+        return flask.jsonify(empty)
+
+    levels = compute_daily_overnight_value_areas(df)
+    if levels.empty:
+        return flask.jsonify(empty)
+
+    from .data import to_display_naive  # ייבוא מאוחר - אותה סיבה בדיוק כמו _epoch למטה
+    open_epoch = to_display_naive(pd.DatetimeIndex(levels["rth_open_time"])) \
+        .astype("datetime64[s]").astype("int64").to_numpy()
+    close_epoch = to_display_naive(pd.DatetimeIndex(levels["rth_close_time"])) \
+        .astype("datetime64[s]").astype("int64").to_numpy()
+
+    poc_arr = levels["poc"].to_numpy()
+    val_arr = levels["val"].to_numpy()
+    vah_arr = levels["vah"].to_numpy()
+    rows = [
+        {"poc": float(poc_arr[i]), "val": float(val_arr[i]), "vah": float(vah_arr[i]),
+         "rth_open_epoch": int(open_epoch[i]), "rth_close_epoch": int(close_epoch[i])}
+        for i in range(len(levels))
+    ]
+    return flask.jsonify({"symbol": symbol, "levels": rows})
+
+
 @app.server.route("/api/strategies")
 def api_strategies_list():
     """כל האסטרטגיות השמורות (שם/קוד/הגדרות) - assets/strategy_library.js קורא
@@ -1191,6 +1241,15 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
         for val, id_dict in zip(strategy_input_values, strategy_input_ids)
         if isinstance(id_dict, dict) and id_dict.get("name")
     }
+
+    # מגן מפני race condition (מאיתי): החלפת אסטרטגיה מהספרייה משנה את code-input
+    # ואת run-window-store כמעט יחד, ולפעמים שדות-הקלט ב-State עדיין שייכים
+    # לאסטרטגיה הקודמת. אם קבוצת השמות לא תואמת לקוד הנוכחי - מתעלמים מהם
+    # ומשתמשים בברירות-המחדל של המנוע.
+    current_input_names = {item["name"] for item in parse_strategy_inputs(_code)}
+    provided_names = {id_dict.get("name") for id_dict in strategy_input_ids if isinstance(id_dict, dict)}
+    if provided_names and current_input_names != provided_names:
+        strategy_overrides = {}
 
     # בוחרים איזה מנוע וקטורי להריץ לפי שורת-הסימון הראשונה בקוד (# strategy:
     # <key>) - לא מריצים את הקוד עצמו. בלי סימון (DEFAULT_CODE, או אסטרטגיה

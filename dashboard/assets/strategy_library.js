@@ -218,7 +218,11 @@
         // run-window-store הוא ה-Input שמפעיל את run_or_switch (ראו app.py); הבקטסט
         // עצמו תמיד רץ על כל ההיסטוריה בלי קשר לתוכן כאן - רק ה-"n" הייחודי חשוב,
         // כדי ש-Dash יזהה את זה כשינוי נתונים אמיתי בכל קליק (בדיוק כמו run-btn).
-        setProps("run-window-store", {data: {from: null, to: null, n: Date.now()}});
+        // עיכוב קטן (מאיתי): setProps("code-input") מפעיל round-trip שבונה מחדש את
+        // שדות-הקלט; בלי לחכות, הריצה עלולה לקרוא את השדות של האסטרטגיה הקודמת.
+        setTimeout(function () {
+            setProps("run-window-store", {data: {from: null, to: null, n: Date.now()}});
+        }, 350);
     }
 
     document.addEventListener("click", function (e) {

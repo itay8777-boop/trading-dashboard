@@ -26,8 +26,13 @@
     // דוחקים את הוולום לרצועה צרה מעליו (RSI_VOLUME_MARGINS_WITH_RSI), ומחזירים
     // להגדרת ברירת-המחדל בהסרה - כדי ש"נקי ונפרד מהוולום" (דרישה מפורשת) יתקיים
     // רק כשה-RSI באמת מוצג, ולא יגזול מקום מהגרף כל הזמן.
-    var VOLUME_MARGINS_DEFAULT = {top: 0.78, bottom: 0.0};
+    var VOLUME_MARGINS_DEFAULT = {top: 0.85, bottom: 0.0};
     var VOLUME_MARGINS_WITH_RSI = {top: 0.62, bottom: 0.2};
+
+    // "Overnight VA Levels" - צבעים נבדלים מכל אינדיקטור אחר כאן, POC בולט יותר
+    // (קו עבה יותר) מ-VAH/VAL (אותו צבע לשניהם - הם שתי קצוות של אותו טווח).
+    var OVERNIGHT_POC_COLOR = "#FFA726";
+    var OVERNIGHT_VA_COLOR = "#64B5F6";
 
     // הגדרת כל אינדיקטור: איך לבנות/להסיר את ה-series שלו, ואיך לחשב אותו
     // מתוך מערך הנרות (candles - בדיוק הפורמט של candleSeries.data():
@@ -190,9 +195,73 @@
                 return bollingerPoints(candles.map(closeOf), candles, p.length, p.std);
             },
         },
+        // "Overnight VA Levels" - שונה משאר האינדיקטורים כאן: אין compute() מקומי,
+        // המספרים (POC/VAH/VAL של חלון-הלילה, לכל יום) מגיעים מהשרת
+        // (/api/overnight_levels, ראו app.py) במקום להיות מחושבים מתוך הנרות
+        // שכבר על הגרף - כי גבולות ה-RTH (09:30/16:00 ET) הם מושג בשעון ניו-יורק,
+        // ואילו candle.time כאן הוא "UTC מזויף" של שעון ישראל (data.py:
+        // DISPLAY_TZ) - שחזור הגבולות האלה מתוך epoch-התצוגה היה דורש להפוך שתי
+        // המרות-אזור-זמן תלויות-שעון-קיץ נפרדות (ישראל/ארה"ב) בצד הלקוח. ראו
+        // fetchAndSet למטה ו-computeAndSet (ניהול-מצב) שמזהה את ה-fetchAndSet
+        // הזה ומפנה אליו במקום ל-compute() הרגיל - תוספת מינימלית, לא נוגעת
+        // בנתיב הקיים של שאר האינדיקטורים.
+        // "Overnight VA Levels" - שלא כמו שאר האינדיקטורים כאן, לא מצויר כ-
+        // LineSeries רגיל אלא כ-primitive על ה-canvas (אותה טכניקה בדיוק כמו
+        // createRsiFillPrimitive למטה), כדי לצייר כל יום בדיוק בטווח-הפיקסלים
+        // של ה-RTH שלו בלבד, עם הפסקה אמיתית מחוץ לכך - דבר ש-LineSeries לא
+        // מאפשר (נבדק אמפירית: נקודת-רווח/whitespace לא יוצרת הפסקה חזותית
+        // ב-LWC 4.2.3, מחברת קו ישר דרכה בכל זאת). attachPrimitive/
+        // detachPrimitive הן נקודת-הרחבה ציבורית ומתועדת של LWC - לא נוגעות
+        // בציור הנרות עצמו בשום צורה.
+        overnightva: {
+            multi: true,
+            create: function () {
+                var primitive = createOvernightLevelsPrimitive();
+                if (window.__tv && window.__tv.candleSeries
+                    && typeof window.__tv.candleSeries.attachPrimitive === "function") {
+                    window.__tv.candleSeries.attachPrimitive(primitive);
+                }
+                return {primitive: primitive};
+            },
+            remove: function (chart, series) {
+                if (window.__tv && window.__tv.candleSeries
+                    && typeof window.__tv.candleSeries.detachPrimitive === "function") {
+                    window.__tv.candleSeries.detachPrimitive(series.primitive);
+                }
+            },
+            setData: function (series, levels) {
+                series.primitive.setLevels(levels);
+            },
+            // תצוגה בלבד: קורא GET על /api/overnight_levels ומצייר את התשובה -
+            // לא שולח/יכול לשלוח שום הזמנה, ולא נוגע בשום אסטרטגיה. מטמון
+            // פשוט (overnightLevelsCache, למטה) כדי לא לבקש מהשרת מחדש בכל
+            // tick של ה-polling (כל ~400ms) - רק כש-הסימבול באמת מתחלף.
+            fetchAndSet: function (series, symbol) {
+                if (overnightLevelsCache.symbol === symbol && overnightLevelsCache.data) {
+                    this.setData(series, overnightLevelsCache.data);
+                    return;
+                }
+                if (overnightLevelsCache.fetching === symbol) return;  // כבר בבקשה פעילה
+                overnightLevelsCache.fetching = symbol;
+                fetch("/api/overnight_levels?symbol=" + encodeURIComponent(symbol))
+                    .then(function (r) { return r.json(); })
+                    .then(function (payload) {
+                        if (overnightLevelsCache.fetching === symbol) overnightLevelsCache.fetching = null;
+                        if (!payload || payload.symbol !== symbol) return;  // תשובה מיושנת
+                        var levels = payload.levels || [];
+                        overnightLevelsCache = {symbol: symbol, data: levels, fetching: null};
+                        var active = ACTIVE.overnightva;
+                        if (active) DEFS.overnightva.setData(active.series, levels);
+                    })
+                    .catch(function () { overnightLevelsCache.fetching = null; });
+            },
+        },
     };
 
     var ACTIVE = {};  // key -> {series, params}
+
+    // מטמון בקשת "Overnight VA Levels" האחרונה - ראו DEFS.overnightva.fetchAndSet.
+    var overnightLevelsCache = {symbol: null, data: null, fetching: null};
 
     function closeOf(c) { return c.close; }
 
@@ -345,6 +414,77 @@
         };
     }
 
+    // primitive ל"Overnight VA Levels" - אותה טכניקה בדיוק כמו
+    // createRsiFillPrimitive למעלה (attached/detached/paneViews/renderer.draw
+    // על ה-canvas), אבל כאן כל יום מצויר בדיוק בטווח-הפיקסלים של ה-RTH שלו
+    // בלבד (timeToCoordinate על rth_open_epoch/rth_close_epoch של אותו יום) -
+    // אין שום ציור מחוץ לטווח הזה, כך שיש הפסקה אמיתית בין יום ליום, לא עוד
+    // "פלטו שנמשך" כמו בגרסת ה-LineSeries הקודמת.
+    function createOvernightLevelsPrimitive() {
+        var levels = [], chartRef = null, seriesRef = null, requestUpdate = null;
+
+        function drawDay(ctx, ts, day) {
+            var x0 = ts.timeToCoordinate(day.rth_open_epoch);
+            var x1 = ts.timeToCoordinate(day.rth_close_epoch);
+            if (x0 === null || x1 === null) return;  // היום הזה כרגע מחוץ לטווח הנראה
+
+            var yPoc = seriesRef.priceToCoordinate(day.poc);
+            var yVah = seriesRef.priceToCoordinate(day.vah);
+            var yVal = seriesRef.priceToCoordinate(day.val);
+
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = OVERNIGHT_VA_COLOR;
+            if (yVah !== null) {
+                ctx.beginPath();
+                ctx.moveTo(x0, yVah);
+                ctx.lineTo(x1, yVah);
+                ctx.stroke();
+            }
+            if (yVal !== null) {
+                ctx.beginPath();
+                ctx.moveTo(x0, yVal);
+                ctx.lineTo(x1, yVal);
+                ctx.stroke();
+            }
+            if (yPoc !== null) {
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = OVERNIGHT_POC_COLOR;
+                ctx.beginPath();
+                ctx.moveTo(x0, yPoc);
+                ctx.lineTo(x1, yPoc);
+                ctx.stroke();
+            }
+        }
+
+        var renderer = {
+            draw: function (target) {
+                target.useMediaCoordinateSpace(function (scope) {
+                    if (!chartRef || !seriesRef || !levels.length) return;
+                    var ctx = scope.context;
+                    var ts = chartRef.timeScale();
+                    ctx.save();
+                    for (var i = 0; i < levels.length; i++) drawDay(ctx, ts, levels[i]);
+                    ctx.restore();
+                });
+            },
+        };
+
+        var paneView = {
+            renderer: function () { return renderer; },
+            zOrder: function () { return "top"; },  // מעל הנרות, כדי שהרמות יהיו ברורות
+        };
+
+        return {
+            attached: function (param) {
+                chartRef = param.chart; seriesRef = param.series; requestUpdate = param.requestUpdate;
+            },
+            detached: function () { chartRef = null; seriesRef = null; requestUpdate = null; },
+            paneViews: function () { return [paneView]; },
+            updateAllViews: function () {},
+            setLevels: function (newLevels) { levels = newLevels || []; if (requestUpdate) requestUpdate(); },
+        };
+    }
+
     // מעדכן את תווית "RSI 14 close" בפינה השמאלית-עליונה של הפאנל - טקסט
     // ה-DOM (לא canvas) כדי לערבב בקלות שני צבעים בתוך שורה אחת.
     function updateRsiLabel(label, data) {
@@ -423,6 +563,15 @@
     function computeAndSet(key) {
         var def = ACTIVE[key];
         if (!def || !window.__tv || !window.__tv.chart) return;
+        // "Overnight VA Levels" הוא היחיד כאן בלי compute() מקומי - המספרים
+        // מגיעים מהשרת (ראו DEFS.overnightva.fetchAndSet). ענף נוסף, לא נוגע
+        // בנתיב הקיים: לכל אינדיקטור אחר (ש-fetchAndSet לא קיים אצלו)
+        // ה-if הזה פשוט False, והקוד ממשיך בדיוק כמו קודם.
+        if (DEFS[key].fetchAndSet) {
+            var symbol = (window.__tv.debugState && window.__tv.debugState().currentSymbol) || "";
+            if (symbol) DEFS[key].fetchAndSet(def.series, symbol);
+            return;
+        }
         var candles = getCandles();
         if (!candles.length) return;
         var data = DEFS[key].compute(candles, getVolumes(), def.params);

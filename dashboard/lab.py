@@ -102,6 +102,53 @@ ENGINES: dict[str, dict] = {
                    ("ALLOW_SHORT", "allow_short", _B, True)],
         "runner": S.run_vwap_revert_backtest,
     },
+    # ---- המנועים של איתי (מוזגו מ-main). עצמאיים: בלי מודל מילוי ריאלי.
+    "hammer_breakout": {
+        "title": "פטיש + פריצה (איתי)",
+        "desc": "נר פטיש או נר שורי חזק קובע טריגר (High + טיק). כניסה רק אם הנר הבא פורץ וסוגר מעליו. "
+                "יציאה בסטופ או כשהמרחק מ-SMA20 נסוג אחרי שיא. לונג בלבד.",
+        "code": S.HAMMER_BREAKOUT_CODE,
+        "params": [("STOP_LOSS_PTS", "stop_loss_pts", _F, 5.0), ("MAX_BODY_PTS", "max_body_pts", _F, 7.0),
+                   ("MIN_STD_BEFORE", "min_std_before", _F, 20.0), ("EXCLUDE_OPEN_HOURS", "exclude_open_hours", _B, False),
+                   ("PEAK_DISTANCE_PTS", "peak_distance_pts", _F, 30.0), ("EXIT_DISTANCE_PTS", "exit_distance_pts", _F, 5.0)],
+        "runner": S.run_hammer_breakout_backtest,
+    },
+    "hammer_swing_exit": {
+        "title": "פטיש + יציאת סווינג (איתי)",
+        "desc": "אותה כניסה של פטיש+פריצה; יציאה כשה-Low שובר את ה-Low הקודם (סטופ נגרר מבני), "
+                "סטופ התחלתי קבוע ואופציית ברייק-איבן.",
+        "code": S.HAMMER_SWING_EXIT_CODE,
+        "params": [("STOP_LOSS_PTS", "stop_loss_pts", _F, 5.0), ("MAX_BODY_PTS", "max_body_pts", _F, 7.0),
+                   ("BREAK_EVEN_PTS", "break_even_pts", _F, 10.0), ("USE_BREAK_EVEN", "use_break_even", _B, False)],
+        "runner": S.run_hammer_swing_exit_backtest,
+    },
+    "sma20_mean_reversion": {
+        "title": "חזרה ל-SMA20 (איתי)",
+        "desc": "מרחק מהממוצע הנע 20 גדול מסף: נכנסים נגד התנועה בפתיחה הבאה (לונג ושורט). "
+                "יציאה כשהמחיר חוזר לממוצע או בסטופ.",
+        "code": S.SMA20_MEAN_REVERSION_CODE,
+        "params": [("MIN_DISTANCE_PTS", "min_distance_pts", _F, 20.0), ("STOP_LOSS_PTS", "stop_loss_pts", _F, 15.0)],
+        "runner": S.run_sma20_mean_reversion_backtest,
+    },
+    "down_streak_reversion": {
+        "title": "רצף ירידות (איתי)",
+        "desc": "אחרי בדיוק N נרות יורדים (סגירה מתחת ל-Low הקודם) נכנסים לונג בפתיחה הבאה. "
+                "יציאה לפי זמן או בשבירת Low קודם, עם פילטר תנודתיות אופציונלי.",
+        "code": S.DOWN_STREAK_REVERSION_CODE,
+        "params": [("STREAK_LENGTH", "streak_length", _I, 3), ("HOLD_BARS", "hold_bars", _I, 1),
+                   ("USE_PRIOR_LOW_EXIT", "use_prior_low_exit", _B, True), ("USE_STOP_LOSS", "use_stop_loss", _B, False),
+                   ("STOP_LOSS_PTS", "stop_loss_pts", _F, 5.0), ("USE_VOLATILITY_FILTER", "use_volatility_filter", _B, True),
+                   ("VOLATILITY_THRESHOLD", "volatility_threshold", _F, 0.0004)],
+        "runner": S.run_down_streak_reversion_backtest,
+    },
+    "overnight_val_reversion": {
+        "title": "החזרת VAL לילי (איתי)",
+        "desc": "פרופיל נפח של הלילה (16:00 עד 09:30) נותן POC/VAH/VAL. בסשן היום, כשהמחיר חודר מתחת "
+                "ל-VAL וסוגר חזרה מעליו נכנסים לונג; סטופ ויעד קבועים, סגירה כפויה ב-16:00.",
+        "code": S.OVERNIGHT_VAL_REVERSION_CODE,
+        "params": [("STOP_LOSS_PTS", "stop_loss_pts", _F, 50.0), ("TAKE_PROFIT_PTS", "take_profit_pts", _F, 90.0)],
+        "runner": S.run_overnight_val_reversion_backtest,
+    },
 }
 
 # שמות ה-"# input" המוכרים לכל מנוע (משלים את RECOGNIZED_STRATEGY_INPUTS ב-strategy.py
@@ -379,6 +426,13 @@ LABELS: dict[str, tuple[str, str]] = {
     "RSI_OVERSOLD": ("RSI Oversold", "רמת מכירת יתר"), "RSI_OVERBOUGHT": ("RSI Overbought", "רמת קניית יתר"),
     "HAMMER_RATIO": ("Wick / Body Ratio", "יחס פתיל לגוף"),
     "STOP_LOSS_PTS": ("Stop Loss (pts)", "סטופ בנקודות"), "TAKE_PROFIT_PTS": ("Take Profit (pts)", "יעד בנקודות"),
+    "MAX_BODY_PTS": ("Max Body (pts)", "גוף נר מקסימלי"), "MIN_STD_BEFORE": ("Min Std Before", "סטיית תקן מינימלית לפני האות"),
+    "EXCLUDE_OPEN_HOURS": ("Skip 09:00-11:00", "לדלג על שעות הפתיחה"), "PEAK_DISTANCE_PTS": ("Peak Distance (pts)", "מרחק שיא מ-SMA20"),
+    "EXIT_DISTANCE_PTS": ("Exit Distance (pts)", "מרחק יציאה מ-SMA20"), "BREAK_EVEN_PTS": ("Break-even (pts)", "מעבר לברייק-איבן אחרי"),
+    "USE_BREAK_EVEN": ("Use Break-even", "להפעיל ברייק-איבן"), "MIN_DISTANCE_PTS": ("Min Distance (pts)", "מרחק מינימלי מהממוצע"),
+    "STREAK_LENGTH": ("Streak Length", "אורך הרצף"), "HOLD_BARS": ("Hold Bars", "נרות החזקה"),
+    "USE_PRIOR_LOW_EXIT": ("Prior-Low Exit", "יציאה בשבירת Low קודם"), "USE_STOP_LOSS": ("Use Stop Loss", "להפעיל סטופ"),
+    "USE_VOLATILITY_FILTER": ("Volatility Filter", "פילטר תנודתיות"), "VOLATILITY_THRESHOLD": ("Volatility Threshold", "סף תנודתיות"),
     "SWING_BARS": ("Swing Lookback", "נרות לזיהוי נקודת מפנה"), "MIN_LEG_PTS": ("Min Leg Size (pts)", "רגל מינימלית בנקודות"),
     "ENTRY_FIB": ("Entry Retracement", "רמת פיבונאצ'י לכניסה"), "STOP_FIB": ("Stop Retracement", "רמת פיבונאצ'י לסטופ"),
     "STOP_BUFFER_PTS": ("Stop Buffer (pts)", "מרווח סטופ בנקודות"), "TARGET_EXT": ("Target Extension", "הארכת פיבונאצ'י ליעד"),
