@@ -1,23 +1,38 @@
-/* ספריית אסטרטגיות (Settings ← Strategy) - כפתור "Strategy library" שפותח
-   תפריט בסגנון ה-"My Scripts" של TradingView: רשימת אסטרטגיות שמורות (קליק =
-   טעינה + הרצת בקטסט אוטומטית), ו-Save current/Save as new/Delete. הכל בצד
-   הלקוח בכוונה - השמירה עצמה עוברת דרך /api/strategies* (app.py), אבל אין שום
+/* ספריית אסטרטגיות (Pine Editor) - חץ קטן ליד לשונית "Pine Editor" שפותח תפריט
+   בסגנון ה-"My Scripts" של TradingView: רשימת אסטרטגיות שמורות (קליק = טעינה
+   + הרצת בקטסט אוטומטית), ו-Save current/Save as new/Delete. הכל בצד הלקוח
+   בכוונה - השמירה עצמה עוברת דרך /api/strategies* (app.py), אבל אין שום
    dcc.Store/callback של Dash בתמונה: code-input והגדרות ה-Settings מתעדכנים
    ישירות דרך window.dash_clientside.set_props, בדיוק כמו run-window-store
    שכבר מופעל כך מ-run-btn (ראו app.py). זה נמנע מלהוסיף Output-ים חדשים
    לרכיבים קיימים, שהיה מסתכן בהתנגשות עם callbacks אחרים שכבר עובדים עליהם.
-
-   הכפתור והתפריט הם תוכן רגיל בתוך תת-לשונית "Strategy" (ראו app.py:
-   strategy-lib-wrap, position:relative) - לא עוד אלמנט צף שממוקם ב-JS מעל
-   כותרת-לשונית: זה היה נחוץ כשה-Pine Editor היה לשונית עצמאית (dcc.Tab לא
-   מאפשר תוכן מותאם-אישית בכותרת שלו), אבל אחרי שהוא הפך לתוכן רגיל בתוך
-   Settings אין יותר סיבה לטריק הזה - התפריט פשוט position:absolute ביחס
-   ל-wrap שלו (ראו style.css), בלי שום מדידת getBoundingClientRect/interval/
-   MutationObserver.
    */
 (function () {
     var activeStrategyName = null;
     var strategiesCache = [];
+
+    function findPineEditorTab() {
+        var tabs = document.querySelectorAll(".panel-tabs .ptab, #more-tabs .rtab");
+        for (var i = 0; i < tabs.length; i++) {
+            var lbl = (tabs[i].textContent || "").trim();
+            if (lbl === "Pine Editor" || lbl === "עורך קוד" || lbl === "קוד") return tabs[i];
+        }
+        return null;
+    }
+
+    function positionArrow() {
+        var arrow = document.getElementById("strategy-lib-arrow");
+        var bar = document.querySelector(".panel-bar");
+        var tab = findPineEditorTab();
+        if (!arrow || !bar) return;
+        if (!tab || !tab.offsetParent) { arrow.style.display = "none"; return; }
+        arrow.style.display = "";
+        var barRect = bar.getBoundingClientRect();
+        var tabRect = tab.getBoundingClientRect();
+        var rtl = getComputedStyle(bar).direction === "rtl";
+        arrow.style.left = Math.round(rtl ? (tabRect.left - barRect.left + 6) : (tabRect.right - barRect.left - 22)) + "px";
+        arrow.style.top = Math.round(tabRect.top - barRect.top + (tabRect.height - 20) / 2) + "px";
+    }
 
     function closeMenu() {
         var menu = document.getElementById("strategy-lib-menu");
@@ -71,9 +86,22 @@
         }
     }
 
+    function placeMenu() {
+        var menu = document.getElementById("strategy-lib-menu");
+        var arrow = document.getElementById("strategy-lib-arrow");
+        var bar = document.querySelector(".panel-bar");
+        if (!menu || !arrow || !bar) return;
+        var barRect = bar.getBoundingClientRect();
+        var arrowRect = arrow.getBoundingClientRect();
+        var left = arrowRect.left - barRect.left - 200;
+        menu.style.left = Math.max(4, left) + "px";
+        menu.style.top = Math.round(arrowRect.bottom - barRect.top + 4) + "px";
+    }
+
     async function openMenu() {
         await fetchStrategies();
         renderMenu();
+        placeMenu();
         var menu = document.getElementById("strategy-lib-menu");
         if (menu) menu.style.display = "block";
     }
@@ -83,19 +111,21 @@
         openMenu();
     }
 
-    // ה-wrap הוא position:relative (ראו style.css: strategy-lib-wrap) - גם
-    // התפריט וגם ה-toast ממוקמים ביחס אליו ישירות ב-CSS (top/left), בלי שום
-    // מדידת getBoundingClientRect כאן.
     function showToast(text) {
-        var wrap = document.querySelector(".strategy-lib-wrap");
-        if (!wrap) return;
+        var bar = document.querySelector(".panel-bar");
+        var arrow = document.getElementById("strategy-lib-arrow");
+        if (!bar || !arrow) return;
         var toast = document.getElementById("strategy-lib-toast");
         if (!toast) {
             toast = document.createElement("div");
             toast.id = "strategy-lib-toast";
             toast.className = "strategy-lib-toast";
-            wrap.appendChild(toast);
+            bar.appendChild(toast);
         }
+        var barRect = bar.getBoundingClientRect();
+        var arrowRect = arrow.getBoundingClientRect();
+        toast.style.left = Math.round(arrowRect.left - barRect.left) + "px";
+        toast.style.top = Math.round(arrowRect.bottom - barRect.top + 6) + "px";
         toast.textContent = text;
         toast.classList.add("show");
         clearTimeout(toast._hideTimer);
@@ -185,24 +215,14 @@
         // ללשונית הזו רק *אחרי* שהוא מסיים, בדיוק כמו שכפתור "Add to chart" הרגיל
         // עושה זאת מראש דרך ה-clientside_callback הנפרד שלו.
         setProps("panel-tabs", {value: "tester"});
-        // עיכוב קטן לפני run-window-store: setProps("code-input", ...) למעלה
-        // מפעיל round-trip לשרת (update_strategy_inputs ב-app.py, שבונה מחדש
-        // את strategy-inputs-container לברירות-המחדל של האסטרטגיה *החדשה*) -
-        // בלי העיכוב, run-window-store עלול "לדרוס" ולהגיע לפני שה-round-trip
-        // הזה הסתיים, ואז run_or_switch קורא State עדיין עם שדות-הקלט של
-        // האסטרטגיה ה*קודמת* (למשל STOP_LOSS_PTS שנשאר על הערך הישן, כי שם
-        // השדה זהה בין שתי האסטרטגיות אבל ברירת-המחדל שונה) - נמצא בפועל
-        // בדיוק ככה. app.py:run_or_switch מכיל גם הגנה משלימה בצד-שרת (בודקת
-        // שקבוצת שמות-השדות תואמת את מה ש-parse_strategy_inputs מפרש מהקוד
-        // הנוכחי, ומתעלמת מ-overrides אם לא) - העיכוב כאן מקטין את הסיכוי
-        // שבכלל יגיע למצב הזה, לא מחליף את ההגנה בצד-שרת.
+        // run-window-store הוא ה-Input שמפעיל את run_or_switch (ראו app.py); הבקטסט
+        // עצמו תמיד רץ על כל ההיסטוריה בלי קשר לתוכן כאן - רק ה-"n" הייחודי חשוב,
+        // כדי ש-Dash יזהה את זה כשינוי נתונים אמיתי בכל קליק (בדיוק כמו run-btn).
+        // עיכוב קטן (מאיתי): setProps("code-input") מפעיל round-trip שבונה מחדש את
+        // שדות-הקלט; בלי לחכות, הריצה עלולה לקרוא את השדות של האסטרטגיה הקודמת.
         setTimeout(function () {
-            // run-window-store הוא ה-Input שמפעיל את run_or_switch (ראו app.py);
-            // הבקטסט עצמו תמיד רץ על כל ההיסטוריה בלי קשר לתוכן כאן - רק
-            // ה-"n" הייחודי חשוב, כדי ש-Dash יזהה את זה כשינוי נתונים אמיתי
-            // בכל קליק (בדיוק כמו run-btn).
             setProps("run-window-store", {data: {from: null, to: null, n: Date.now()}});
-        }, 150);
+        }, 350);
     }
 
     document.addEventListener("click", function (e) {
@@ -246,4 +266,32 @@
         }
     });
 
+    window.addEventListener("resize", positionArrow);
+
+    // ה-layout נבנה ע"י Dash אחרי טעינת הסקריפט - ממתינים שהלשוניות יופיעו
+    // (אותה מוסכמה כמו assets/panel.js).
+    var tries = 0;
+    var initTimer = setInterval(function () {
+        if (findPineEditorTab()) {
+            positionArrow();
+            clearInterval(initTimer);
+        } else if (++tries > 60) {
+            clearInterval(initTimer);
+        }
+    }, 250);
+
+    // רוחב הלשוניות יכול להשתנות (למשל טעינת גופן מאוחרת) - עוקבים כדי לשמור
+    // את מיקום החץ מסונכרן עם הלשונית בפועל.
+    var barTries = 0;
+    var barTimer = setInterval(function () {
+        var bar = document.querySelector(".panel-bar");
+        if (bar) {
+            new MutationObserver(positionArrow).observe(bar, {
+                childList: true, subtree: true, attributes: true, attributeFilter: ["class"],
+            });
+            clearInterval(barTimer);
+        } else if (++barTries > 60) {
+            clearInterval(barTimer);
+        }
+    }, 250);
 })();

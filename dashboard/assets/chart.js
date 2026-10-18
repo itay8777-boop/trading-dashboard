@@ -411,6 +411,9 @@
             },
             requestMarkersWindow: requestMarkersWindow,
             idealTierFor: idealTierFor,
+            // לכלי הגרף (assets/chart_tools.js): טעינת דאטה סביב זמן יעד לפני קפיצה אליו
+            requestLodWindowAsync: requestLodWindowAsync,
+            closestCandleIndex: closestCandleIndex,
         };
     }
 

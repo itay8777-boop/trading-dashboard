@@ -8,3 +8,4 @@ pyarrow>=15.0
 backtesting>=0.6
 ib_async>=2.0
 databento>=0.86
+pytest

@@ -102,6 +102,12 @@ _connected = threading.Event()
 _ib: IB | None = None
 
 
+# הברים האחרונים שהתקבלו במנוי הנוכחי (seed + כל בר חדש) - למסחר בנייר (paper.py),
+# שצריך נרות סגורים חיים בלי לבצע שאיבה היסטורית נפרדת (איטית/נתקעת לחוזים).
+_recent: list[dict] = []
+_RECENT_MAX = 4000
+
+
 def _request_realtime_market_data(ib: IB) -> None:
     """מבקש נתוני שוק חיים (marketDataType=1), לא מתעכבים (3) - נדרש כי בלי
     הבקשה המפורשת הזו IB Gateway עשוי לשרת נתונים מתעכבים גם כשה-Market Data
@@ -336,6 +342,18 @@ async def _main(host: str, port: int) -> None:
             global _bar, _last_tick_at
             _bar = make_bar(raw)
             _last_tick_at = time.monotonic()
+            # paper.py: רשימת הברים החיים (הבר הסגור מקבל את ערכיו הסופיים)
+            nb = _bar_from_ib(bars[-1])
+            if _recent and _recent[-1]["time"] == nb["time"]:
+                _recent[-1] = nb
+            else:
+                if hasNewBar and len(bars) >= 2:
+                    prev = _bar_from_ib(bars[-2])
+                    if _recent and _recent[-1]["time"] == prev["time"]:
+                        _recent[-1] = prev
+                _recent.append(nb)
+                if len(_recent) > _RECENT_MAX:
+                    del _recent[:len(_recent) - _RECENT_MAX]
         # לוג מלא של הבר החי האחרון שהתקבל מ-IB, כולל raw_ib_date עם ה-tzinfo
         # הגולמי שלו (בפועל US/Central עבור MNQ/CME - לא US/Eastern) לצד הבר
         # אחרי ההמרה (_bar_from_ib כבר עושה tz_convert("America/New_York")
@@ -445,6 +463,7 @@ async def _main(host: str, port: int) -> None:
                             # מאופס למנוי החדש - עדכון עדיין לא הגיע אליו, אז
                             # is_market_live לא אמור "לרשת" חיוּת מהסימבול הקודם.
                             _last_tick_at = None
+                            _recent[:] = [_bar_from_ib(b) for b in bars[-_RECENT_MAX:]]
                         # רשת-הביטחון לצמיחת הקאש - לא תלויה ב-bars.updateEvent
                         # בכלל (ראו _persist_seed_bars). קורה בכל הרשמה/resubscribe,
                         # כולל resubscribe שהופעל ע"י שעון-השמירה למטה - לכן
@@ -570,6 +589,24 @@ def get_live_bar(symbol: str, timeframe: str) -> dict | None:
         if _active != (symbol, timeframe) or _bar is None:
             return None
         return dict(_bar)
+
+
+def get_recent_bars(symbol: str, timeframe: str):
+    """DataFrame (Open/High/Low/Close/Volume, אינדקס naive בשעון ניו-יורק) של הברים
+    שהתקבלו במנוי החי הנוכחי - כולל הבר שעדיין נבנה (האחרון). None אם אין מנוי
+    לסימבול/טיים-פריים האלה. קריאה זולה מהזיכרון, לא נוגעת ב-IB."""
+    import pandas as pd
+    from .data import from_display_epoch
+    symbol = (symbol or "").strip().upper()
+    with _lock:
+        if _active != (symbol, timeframe) or not _recent:
+            return None
+        rows = list(_recent)
+    idx = pd.DatetimeIndex([from_display_epoch(r["time"]) for r in rows])
+    df = pd.DataFrame({"Open": [r["open"] for r in rows], "High": [r["high"] for r in rows],
+                       "Low": [r["low"] for r in rows], "Close": [r["close"] for r in rows],
+                       "Volume": [r["volume"] for r in rows]}, index=idx)
+    return df[~df.index.duplicated(keep="last")].sort_index()
 
 
 def is_market_live(symbol: str, timeframe: str) -> bool:

@@ -4,8 +4,7 @@
 דורש TWS/IB Gateway פתוח על 127.0.0.1:7497 עם API מופעל.
 
 הפריסה: הגרף תופס את מלוא הרוחב, ומתחתיו פאנל נפתח/נסגר עם שתי לשוניות —
-Strategy Tester (ביצועים, תשואה, עסקאות) ו-Settings (תת-לשונית Strategy: עורך
-הקוד/Pine Editor; תת-לשונית Account: הגדרות חשבון/ביצוע).
+Strategy Tester (ביצועים, תשואה, עסקאות) ו-Pine Editor (כתיבת קוד האסטרטגיה).
 """
 from __future__ import annotations
 
@@ -14,6 +13,7 @@ import threading
 from pathlib import Path
 
 import flask
+import numpy as np
 import pandas as pd
 from dash import ALL, Dash, Input, Output, State, callback, callback_context, dcc, html, no_update
 
@@ -21,9 +21,11 @@ from dash import ALL, Dash, Input, Output, State, callback, callback_context, dc
 # ולא ל-dashboard/chart.py שנטען כ-`.chart`.
 from chart import _evenly_sampled_indices, build_performance_chart
 
-from . import live, panels
+from . import audit, lab, live, panels, paper, results
 from .chart import build_history_chunk_payload, build_live_bar_payload, build_payload
 from .data import (
+    from_display_epoch,
+    to_display_naive,
     INITIAL_DAYS,
     TIMEFRAME_ORDER,
     DataError,
@@ -36,26 +38,21 @@ from .data import (
 )
 from .strategy import (
     DEFAULT_CODE,
-    DOWN_STREAK_REVERSION_CODE,
-    HAMMER_SWING_EXIT_CODE,
-    OVERNIGHT_VAL_REVERSION_CODE,
+    HAMMER_RSI_CODE,
+    FIB_GOLDEN_CODE,
     RECOGNIZED_STRATEGY_INPUTS,
-    SMA20_MEAN_REVERSION_CODE,
     StrategyCompileError,
-    compute_daily_overnight_value_areas,
     detect_builtin_strategy,
+    compute_daily_overnight_value_areas,
     parse_strategy_inputs,
-    run_down_streak_reversion_backtest,
     run_fast_sma_crossover_backtest,
-    run_hammer_breakout_backtest,
-    run_hammer_swing_exit_backtest,
-    run_overnight_val_reversion_backtest,
-    run_sma20_mean_reversion_backtest,
+    run_hammer_rsi_backtest,
+    run_fib_golden_backtest,
     to_markers,
 )
 
 DEFAULT_SYMBOL = "MNQ"
-DEFAULT_TF = "1m"
+DEFAULT_TF = "5m"
 
 # מחמם את קאש ה-1m בזיכרון ברקע ברגע שהמודול נטען (לפני שהמשתמש בכלל פתח את
 # הדפדפן) - כדי שהגלילה הראשונה שלו כבר לא תשלם את עלות הקריאה החד-פעמית
@@ -87,7 +84,7 @@ MAX_VISIBLE_MARKER_TRADES = 250
 # "List of Trades" מוצג בעמודים של כמה שורות - 150K+ שורות DOM בטבלה אחת (גם
 # אחרי אופטימיזציית בניית ה-HTML עצמה) עדיין מקפיאות את הדפדפן ברגע שהוא מנסה
 # לפרסר/לצייר אותן. ראו ui_components.trades_table_html.
-TRADES_PAGE_SIZE = 100
+TRADES_PAGE_SIZE = results.TRADES_PAGE
 
 # פילטר תקופה מעל גרף ה-Performance (Overview) - בדיוק כמו ב-Strategy Tester
 # של TradingView. "range" (ברירת מחדל) ו-"all" שקולים באפליקציה הזו: הבקטסט
@@ -122,10 +119,8 @@ _STRATEGIES_LOCK = threading.Lock()
 # והן ממשיכות להופיע גם על strategies.json ריק/חדש. שם מזהה זהה לשם שנשמר -
 # שמירה בשם הזה על ידי המשתמש פשוט "תדרוס חזותית" (לא לצמיתות) את המובנית.
 BUILTIN_STRATEGIES = [
-    {"name": "Hammer Swing Exit (built-in)", "code": HAMMER_SWING_EXIT_CODE, "settings": {}},
-    {"name": "SMA20 Mean Reversion (built-in)", "code": SMA20_MEAN_REVERSION_CODE, "settings": {}},
-    {"name": "Down-Streak Reversion (built-in)", "code": DOWN_STREAK_REVERSION_CODE, "settings": {}},
-    {"name": "Overnight VAL Reversion (built-in)", "code": OVERNIGHT_VAL_REVERSION_CODE, "settings": {}},
+    {"name": f"{eng['title']} (built-in)", "code": eng["code"], "settings": {}}
+    for key, eng in lab.ENGINES.items() if not eng.get("default_marker")
 ]
 _BUILTIN_STRATEGY_NAMES = {s["name"] for s in BUILTIN_STRATEGIES}
 
@@ -198,7 +193,8 @@ def _strategy_inputs_section(code: str):
     fields = []
     for item in inputs:
         name, value, type_name = item["name"], item["value"], item["type"]
-        label = name if item["recognized"] else f"{name} (לא נתמך במנוע המהיר)"
+        en, he = lab.param_en(name), lab.param_he(name)
+        label = [html.Span(en, className="ctl-en"), html.Span((he or "") + ("" if item["recognized"] else " · לא פעיל"), className="ctl-he")]
         field_id = {"type": "strategy-input", "name": name}
         if type_name == "bool":
             control = dcc.Checklist(
@@ -208,13 +204,130 @@ def _strategy_inputs_section(code: str):
         else:
             control = dcc.Input(
                 id=field_id, type="number", value=value,
-                step=1 if type_name == "int" else 0.01,
+                step=1 if type_name == "int" else "any",
                 className="num-input tiny", debounce=True,
             )
-        fields.append(html.Div(className="settings-field", children=[
-            html.Span(label, className="ctl-label"), control,
+        fields.append(html.Div(className="settings-field param-field", title=name, children=[
+            html.Div(label, className="ctl-label"), control,
         ]))
     return html.Div(className="settings-grid", children=fields)
+
+
+def _fmt_money(v: float) -> str:
+    sign = "-" if v < 0 else ""
+    return f"{sign}${abs(v):,.0f}"
+
+
+def _catalog_children():
+    """כרטיס לכל אסטרטגיה מובנית: שם, הסבר, פרמטרים, תוצאה אחרונה (אם רצה
+    בסשן הזה) וכפתורי טעינה/הרצה."""
+    by_engine = _RESULTS.get("by_engine", {})
+    cards = []
+    for key, eng in lab.ENGINES.items():
+        last = by_engine.get(key)
+        if last:
+            st = last["stats"]
+            cls = "cat-result pos" if st["net"] > 0 else "cat-result neg"
+            result = html.Div(className=cls, children=[
+                html.Div(f"ריצה אחרונה · {last['symbol']} {last['timeframe']} · {last['at']}", className="cat-result-when"),
+                html.Div(className="cat-stats", children=[
+                    html.Div([html.Span(_fmt_money(st["net"]), className="v"), html.Span("רווח נקי", className="k")]),
+                    html.Div([html.Span(str(st["trades"]), className="v"), html.Span("עסקאות", className="k")]),
+                    html.Div([html.Span(f"{st['win_rate']:.0f}%", className="v"), html.Span("זכייה", className="k")]),
+                    html.Div([html.Span(f"{st['pf']:.2f}", className="v"), html.Span("Profit Factor", className="k")]),
+                    html.Div([html.Span(f"{st['max_dd_pct']:.1f}%", className="v"), html.Span("Drawdown", className="k")]),
+                ]),
+            ])
+        else:
+            result = html.Div("עדיין לא הורץ בסשן הזה", className="cat-result none")
+        chips = [html.Span([html.Span(lab.param_en(n), className="chip-k"), html.Span(lab.fmt_value(d), className="chip-v")],
+                          className="chip", title=f"{lab.param_he(n)} ({n})") for n, _p, _c, d in eng["params"]]
+        cards.append(html.Div(className="cat-card", children=[
+            html.Div(eng["title"], className="cat-title"),
+            html.Div(eng["desc"], className="cat-desc"),
+            html.Div(chips, className="cat-chips"),
+            result,
+            html.Div(className="cat-actions", children=[
+                html.Button("טען לעורך", id={"type": "catalog-load", "key": key},
+                            n_clicks=0, className="cat-btn"),
+                html.Button("טען והרץ", id={"type": "catalog-run", "key": key},
+                            n_clicks=0, className="cat-btn primary"),
+            ]),
+        ]))
+    return [
+        html.Div(className="pane-head", children=[
+            html.Div("ספריית האסטרטגיות", className="pane-title"),
+            html.Div("בחר אסטרטגיה. \"טען והרץ\" מריץ אותה מיד על הסימבול והטיים-פריים שנבחרו למעלה; "
+                     "\"טען לעורך\" פותח אותה לעריכה.", className="pane-sub"),
+        ]),
+        html.Div(className="cat-grid", children=cards),
+    ]
+
+
+def _fld(label, control):
+    return html.Div(className="settings-field", children=[html.Span(label, className="ctl-label"), control])
+
+
+def _optimizer_children():
+    return [
+        html.Div(className="pane-head", children=[
+            html.Div("אופטימיזציית פרמטרים", className="pane-title"),
+            html.Div("בוחרים פרמטר אחד או שניים, טווח וצעד. הדירוג לפי 70% הראשונים של ההיסטוריה; "
+                     "העמודות \"מחוץ למדגם\" מראות את אותם ערכים על 30% האחרונים, כדי לא להתאהב בתוצאה שלא מחזיקה.",
+                     className="pane-sub"),
+        ]),
+        html.Div(id="opt-engine-label", className="opt-engine"),
+        html.Div(className="opt-card", children=[
+            html.Div(className="opt-row", children=[
+                _fld("פרמטר 1", dcc.Dropdown(id="opt-p1", className="settings-dropdown opt-dd", clearable=False, searchable=False)),
+                _fld("מ-", dcc.Input(id="opt-p1-min", type="number", step="any", className="num-input tiny")),
+                _fld("עד", dcc.Input(id="opt-p1-max", type="number", step="any", className="num-input tiny")),
+                _fld("צעד", dcc.Input(id="opt-p1-step", type="number", step="any", className="num-input tiny")),
+            ]),
+            html.Div(className="opt-row", children=[
+                _fld("פרמטר 2 (אופציונלי)", dcc.Dropdown(id="opt-p2", className="settings-dropdown opt-dd", clearable=True,
+                                                     searchable=False, placeholder="ללא")),
+                _fld("מ-", dcc.Input(id="opt-p2-min", type="number", step="any", className="num-input tiny")),
+                _fld("עד", dcc.Input(id="opt-p2-max", type="number", step="any", className="num-input tiny")),
+                _fld("צעד", dcc.Input(id="opt-p2-step", type="number", step="any", className="num-input tiny")),
+            ]),
+            html.Div(className="opt-row opt-run-row", children=[
+                html.Button("▶  הרץ אופטימיזציה", id="opt-run-btn", n_clicks=0, className="run-btn"),
+                html.Span(id="opt-status", className="opt-status"),
+            ]),
+        ]),
+        dcc.Loading(html.Div(id="opt-results", className="opt-results"), type="dot", color="#2962FF"),
+        dcc.Store(id="opt-store"),
+        html.Div(className="pane-head wf-head", children=[
+            html.Div("Walk-forward: אופטימיזציה מתגלגלת", className="pane-title"),
+            html.Div("ההיסטוריה נחתכת לחלונות רצופים. בכל חלון בוחרים את הפרמטרים הטובים ביותר על 70% הראשונים "
+                     "ובודקים אותם על 30% שאחריהם. סך ה\"מחוץ למדגם\" של כל החלונות הוא הביצוע הכן ביותר שאפשר לקבל "
+                     "לפרמטרים שנבחרו באופטימיזציה, ו\"יציבות\" אומרת אם אותם ערכים נבחרים שוב ושוב.",
+                     className="pane-sub"),
+        ]),
+        html.Div(className="opt-card", children=[
+            html.Div(className="opt-row", children=[
+                _fld("חלונות", dcc.Input(id="wf-windows", type="number", value=5, min=2, max=12, step=1, className="num-input tiny")),
+                _fld("דירוג לפי", dcc.Dropdown(id="wf-rank", className="settings-dropdown opt-dd", clearable=False, searchable=False,
+                                              options=[{"label": "רווח נקי", "value": "net"}, {"label": "Profit Factor", "value": "pf"}], value="net")),
+                html.Div(className="settings-field", children=[html.Span("\u00a0", className="ctl-label"),
+                    html.Button("▶  הרץ Walk-forward", id="wf-run-btn", n_clicks=0, className="run-btn",
+                                title="משתמש באותם פרמטרים וטווחים שהוגדרו למעלה")]),
+            ]),
+        ]),
+        dcc.Loading(html.Div(id="wf-results", className="opt-results"), type="dot", color="#2962FF"),
+        html.Div(className="pane-head wf-head", children=[
+            html.Div("רגישות לעלויות", className="pane-title"),
+            html.Div("אותה אסטרטגיה ואותם פרמטרים, עם 4 רמות סליפג' ו-3 רמות עמלה (12 ריצות). "
+                     "התא של 2 טיקים ו-0.75$ הוא המציאות ב-MNQ; 4 טיקים ו-1.50$ הוא תרחיש קשה (חדשות, לילה).",
+                     className="pane-sub"),
+        ]),
+        html.Div(className="opt-row opt-run-row", children=[
+            html.Button("▶  הרץ בדיקת עלויות", id="sens-run-btn", n_clicks=0, className="run-btn"),
+        ]),
+        dcc.Loading(html.Div(id="sens-results", className="opt-results"), type="dot", color="#2962FF"),
+    ]
+
 
 
 def build_layout() -> html.Div:
@@ -232,6 +345,7 @@ def build_layout() -> html.Div:
         dcc.Interval(id="live-interval", interval=LIVE_INTERVAL_MS, n_intervals=0),
 
         html.Div(className="topbar", children=[
+            html.Div(className="brand", children=[html.Span("Strategy", className="brand-a"), html.Span("Lab", className="brand-b")]),
             # debounce=True משדר את הערך רק ביציאה מהשדה, כך שלא רצה שאיבה על כל תו.
             # ב-Dash הזה Enter לבדו אינו מבצע commit, ולכן assets/chart.js הופך Enter
             # ל-blur — וכך הקלדת סימבול + Enter טוענת אותו, כמצופה.
@@ -268,8 +382,289 @@ def build_layout() -> html.Div:
         ]),
 
         html.Div(id="workspace", className="workspace", children=[
+            html.Div(className="bottom-panel", children=[
+            html.Div(className="lab-head", children=[
+                dcc.Dropdown(id="strategy-select", className="settings-dropdown strategy-dd", clearable=False, searchable=False,
+                             options=[{"label": eng["title"], "value": key} for key, eng in lab.ENGINES.items()],
+                             value="sma_cross"),
+                html.Span(id="lab-head-result", className="lab-head-result"),
+                dcc.Dropdown(id="version-select", className="settings-dropdown version-dd", clearable=True, searchable=False,
+                             placeholder="גרסאות שמורות", options=[]),
+                html.Button("✕", id="ver-del-btn", n_clicks=0, className="cat-btn ver-del", title="מחיקת הגרסה השמורה שנבחרה", style={"display": "none"}),
+            ]),
+                html.Div(className="panel-bar", children=[
+                    dcc.Tabs(id="panel-tabs", value="tester", className="panel-tabs", persistence=True,
+                             parent_className="panel-tabs-parent", children=[
+                                 dcc.Tab(label="בדיקה", value="tester",
+                                         className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="עמידות", value="optimize",
+                                         className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="נייר", value="paper",
+                                         className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="היסטוריה", value="history",
+                                         className="ptab", selected_className="ptab-sel"),
+                                 dcc.Tab(label="עוד", value="more",
+                                         className="ptab ptab-more", selected_className="ptab-sel"),
+                             ]),
+                    # חץ ספריית האסטרטגיות, ליד לשונית "Pine Editor" - כמו ב-TradingView.
+                    # dcc.Tab לא מאפשר להטמיע רכיב בתוך כותרת הלשונית עצמה (label הוא
+                    # טקסט בלבד), אז זה אלמנט נפרד הממוקם ב-JS מעל הלשונית (ראו
+                    # assets/strategy_library.js: positionArrow) - חייב .panel-bar
+                    # עם position:relative בשביל זה (ראו style.css).
+                    html.Div("▾", id="strategy-lib-arrow", className="strategy-lib-arrow",
+                             title="Strategy library"),
+                    html.Div(id="strategy-lib-menu", className="strategy-lib-menu",
+                             style={"display": "none"}),
+                    html.Button("⌄", id="panel-toggle", n_clicks=0, className="panel-toggle",
+                                title="פתח/סגור את הפאנל"),
+                ]),
+                html.Div(id="panel-body", className="panel-body", children=[
+                    html.Div(id="tester-pane", children=[
+                        # סרגל עבודה (שלב 2): פרמטרים + טווח + הרצה ליד התוצאות, בלי לעבור לשוניות.
+                        html.Div(className="tester-bar", children=[
+                            html.Div(className="tester-bar-row", children=[
+                                html.Div(className="wb-head", children=[
+                                    html.Div(id="wb-title", className="wb-title"),
+                                    html.Div(id="run-label", className="run-label"),
+                                    html.Span(id="engine-key", style={"display": "none"}),
+                                ]),
+                                html.Div(className="wb-actions", children=[
+                                    html.Span("טווח הבדיקה", className="ctl-label"),
+                                    dcc.Dropdown(id="bt-range", className="settings-dropdown bt-range-dd", persistence=True,
+                                                 options=[{"label": l, "value": k} for k, l in lab.RANGE_OPTIONS],
+                                                 value="all", clearable=False, searchable=False),
+                                    html.Button("▶  הרץ בדיקה", id="tester-run-btn", n_clicks=0, className="run-btn",
+                                                title="הרצת האסטרטגיה שבעורך עם הפרמטרים שלמטה"),
+                                    html.Div(className="ver-save", children=[
+                                        dcc.Input(id="ver-name", type="text", placeholder="שם לגרסה, למשל: וויקוף שמרני", className="num-input ver-input", debounce=True),
+                                        html.Button("שמור גרסה", id="ver-save-btn", n_clicks=0, className="cat-btn", title="שומר את האסטרטגיה עם הערכים שהזנת, בשם שתבחר"),
+                                        html.Span(id="ver-msg", className="opt-status"),
+                                    ]),
+                                    html.Label(className="auto-run", title="מריץ מחדש בכל שינוי פרמטר (לא על נרות דקה)", children=[
+                                        dcc.Checklist(id="auto-run", options=[{"label": "", "value": "on"}], value=[], persistence=True,
+                                                      className="strategy-input-checkbox"),
+                                        html.Span("הרצה אוטומטית"),
+                                    ]),
+                                ]),
+                            ]),
+                            html.Div(id="strategy-inputs-container",
+                                     children=_strategy_inputs_section(lab.ENGINES["sma_cross"]["code"])),
+                        ]),
+                        # dcc.Loading עוטף את שני ה-Output-ים של run_or_switch (למטה) -
+                        # Dash מזהה לבד קריאת callback פעילה שמשפיעה על ילד עטוף ומציג
+                        # ספינר אוטומטית. בלי זה, לחיצה על "Add to chart" לא נתנה שום
+                        # משוב חזותי במשך כל משך הריצה (בקטסט על 7 שנות MNQ/1m יכול
+                        # לקחת כ-3 דקות, backtesting.py מריץ בר-אחר-בר בפייתון, לא
+                        # מוקטר) - בדיוק מה שנראה כאילו "הכפתור לא עושה כלום".
+                        html.Div(id="tester-error", className="tester-error", hidden=True),
+                        dcc.Loading(html.Div(id="key-stats"), type="dot", color="#2962FF"),
+                        dcc.Tabs(id="result-tabs", value="overview", className="result-tabs",
+                                 children=[
+                                     dcc.Tab(label="סקירה", value="overview",
+                                             className="rtab", selected_className="rtab-sel"),
+                                     dcc.Tab(label="ביצועים", value="summary",
+                                             className="rtab", selected_className="rtab-sel"),
+                                     dcc.Tab(label="עסקאות", value="trades",
+                                             className="rtab", selected_className="rtab-sel"),
+                                     dcc.Tab(label="חודשי", value="monthly",
+                                             className="rtab", selected_className="rtab-sel"),
+                                     dcc.Tab(label="מונטה קרלו", value="montecarlo",
+                                             className="rtab", selected_className="rtab-sel"),
+                                 ]),
+                        # פילטר תקופה מעל גרף ה-Performance - מוצג רק בלשונית overview
+                        # (ראו run_or_switch: Output("perf-period-bar","style")). Custom Range
+                        # פותח שני שדות תאריך (perf-custom-range) - טוגל טהור ב-JS, בלי
+                        # סבב לשרת (ראו clientside_callback למטה).
+                        dcc.Store(id="perf-period", data="range"),
+                        html.Div(id="perf-period-bar", className="perf-period-bar", style={"display": "none"}, children=[
+                            dcc.Dropdown(
+                                id="perf-period-select",
+                                options=[{"label": label, "value": key} for key, label in PERIOD_LABELS.items()],
+                                value="range", clearable=False, searchable=False,
+                                className="perf-period-dropdown",
+                            ),
+                            html.Div(id="perf-custom-range", className="perf-custom-range",
+                                     style={"display": "none"}, children=[
+                                         dcc.Input(id="perf-custom-from", type="date",
+                                                   className="perf-custom-date"),
+                                         html.Span("\u2192", className="perf-custom-arrow"),
+                                         dcc.Input(id="perf-custom-to", type="date",
+                                                   className="perf-custom-date"),
+                                     ]),
+                        ]),
+                        html.Div(id="trade-filters", className="trade-filters", style={"display": "none"}, children=[
+                            _fld("מיון", dcc.Dropdown(id="tr-sort", className="settings-dropdown opt-dd", clearable=False, searchable=False, value="time_desc",
+                                                    options=[{"label": "אחרונות קודם", "value": "time_desc"}, {"label": "ראשונות קודם", "value": "time_asc"},
+                                                             {"label": "הרווח הגדול ביותר", "value": "pnl_desc"}, {"label": "ההפסד הגדול ביותר", "value": "pnl_asc"},
+                                                             {"label": "הארוכות ביותר", "value": "dur_desc"}])),
+                            _fld("כיוון", dcc.Dropdown(id="tr-side", className="settings-dropdown", clearable=False, searchable=False, value="all",
+                                                    options=[{"label": "הכל", "value": "all"}, {"label": "לונג", "value": "long"}, {"label": "שורט", "value": "short"}])),
+                            _fld("תוצאה", dcc.Dropdown(id="tr-result", className="settings-dropdown", clearable=False, searchable=False, value="all",
+                                                     options=[{"label": "הכל", "value": "all"}, {"label": "רווח", "value": "win"}, {"label": "הפסד", "value": "loss"}])),
+                            _fld("סכום מינימלי ($)", dcc.Input(id="tr-min", type="number", value=0, min=0, step="any", className="num-input tiny", debounce=True)),
+                        ]),
+                        dcc.Loading(html.Div(id="result-body", className="result-body",
+                                 children=_html(panels.empty(
+                                     "בחר אסטרטגיה בבורר שלמעלה, כוונן פרמטרים ולחץ Enter או \"הרץ בדיקה\"."))),
+                                    type="dot", color="#2962FF"),
+                        # ניווט עמודים ל"List of Trades" - מוצג רק בלשונית trades וכשיש
+                        # יותר מ-TRADES_PAGE_SIZE עסקאות (ראו run_or_switch/_trades_pagination_state).
+                        dcc.Store(id="trades-page", data=0),
+                        html.Div(id="trades-pagination", className="trades-pagination",
+                                 style={"display": "none"}, children=[
+                                     html.Button("‹ הקודם", id="trades-prev-btn", n_clicks=0,
+                                                 className="trades-page-btn"),
+                                     html.Span(id="trades-page-info", className="trades-page-info"),
+                                     html.Button("הבא ›", id="trades-next-btn", n_clicks=0,
+                                                 className="trades-page-btn"),
+                                 ]),
+                    ]),
+                    html.Div(id="more-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        dcc.Tabs(id="more-tabs", value="catalog", className="result-tabs", children=[
+                            dcc.Tab(label="ספריית אסטרטגיות", value="catalog", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="קוד", value="editor", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="הגדרות חשבון", value="settings", className="rtab", selected_className="rtab-sel"),
+                            dcc.Tab(label="ביקורת נתונים", value="audit", className="rtab", selected_className="rtab-sel"),
+                        ]),
+                    ]),
+                    html.Div(id="editor-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        html.Div(className="editor-row", children=[
+                            html.Div("הקוד מגדיר את האסטרטגיה והפרמטרים שלה (שורות עם # input הופכות לשדות בבודק). "
+                                     "שורת # strategy: בראש הקוד קובעת איזה מנוע מובנה רץ.", className="editor-hint"),
+                            html.Div(className="editor-controls", children=[
+                                html.Button("▶  הרץ", id="run-btn", n_clicks=0,
+                                            className="run-btn",
+                                            title="בקטסט על כל ההיסטוריה"),
+                            ]),
+                        ]),
+                        html.Div("שים לב: בגרסה הנוכחית רצים רק המנועים המובנים (לפי שורת # strategy). "
+                                 "קוד חופשי בפונקציות init/next עדיין אינו מורץ; שינוי הפרמטרים כן משפיע.",
+                                 className="editor-note"),
+                        dcc.Textarea(id="code-input", value=lab.ENGINES["sma_cross"]["code"], className="code-area", persistence=True, persistence_type="local",
+                                     spellCheck=False),
+                        html.Div(id="run-error", className="run-error"),
+                    ]),
+                    html.Div(id="settings-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        html.Div(className="settings-hint",
+                                 children="הגדרות חשבון וביצוע. משפיעות על חישוב הרווח, הסליפג' והעמלות בריצה הבאה."),
+                        html.Div(className="settings-grid", children=[
+                            html.Div(className="settings-field", children=[
+                                html.Span("הון התחלתי ($)", className="ctl-label"),
+                                dcc.Input(id="account-value-input", type="number", value=100000,
+                                          min=1000, className="num-input tiny", debounce=True),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("חוזים לעסקה", className="ctl-label"),
+                                dcc.Input(id="contracts-input", type="number", value=1, min=1,
+                                          step=1, className="num-input tiny", debounce=True),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("מכפיל חוזה", className="ctl-label"),
+                                dcc.Input(id="multiplier-input", type="number", value=2, min=0,
+                                          step=0.01, className="num-input tiny", debounce=True),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("סליפג' (טיקים)", className="ctl-label"),
+                                dcc.Input(id="slippage-input", type="number", value=2, min=0,
+                                          step=1, className="num-input tiny", debounce=True),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("עמלה לחוזה ($)", className="ctl-label"),
+                                dcc.Input(id="settings-commission-input", type="number", value=0.75,
+                                          min=0, step="any", className="num-input tiny", debounce=True),
+                                html.Span("לצד, כולל עמלות בורסה. MNQ ב-IB: בערך 0.75$", className="settings-hint"),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("סליפג' ביציאה בסטופ (טיקים)", className="ctl-label"),
+                                dcc.Input(id="exit-slippage-input", type="number", value=3, min=0, step=1,
+                                          className="num-input tiny", debounce=True),
+                                html.Span("סטופ הוא פקודת שוק בתנועה ומחליק יותר מהכניסה", className="settings-hint"),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("מודל מילוי", className="ctl-label"),
+                                dcc.Dropdown(id="fill-mode-input", className="settings-dropdown", clearable=False, searchable=False, value="realistic",
+                                             options=[{"label": "ריאלי", "value": "realistic"}, {"label": "תרחיש גרוע", "value": "worst"},
+                                                      {"label": "אופטימי (ישן)", "value": "optimistic"}]),
+                            ]),
+                            html.Div(className="settings-field", children=[
+                                html.Span("סוג פקודה", className="ctl-label"),
+                                dcc.Dropdown(id="order-type-input", className="settings-dropdown",
+                                             options=[{"label": "Market", "value": "Market"},
+                                                      {"label": "Limit", "value": "Limit"}],
+                                             value="Market", clearable=False, searchable=False),
+                            ]),
+                        ]),
+                        # "Strategy Inputs" - שדות שזוהו אוטומטית מ-"# input" בקוד ה-Pine
+                        # Editor (ראו strategy.parse_strategy_inputs/_strategy_inputs_section).
+                        # מתעדכן בכל שינוי בקוד (Input("code-input","value") למטה); הערכים
+                        # שהמשתמש עורך כאן נקראים ב-run_or_switch דרך pattern-matching
+                        # State ומשפיעים בפועל רק על שמות מוכרים (RECOGNIZED_STRATEGY_INPUTS) -
+                        # שאר השדות מוצגים לשקיפות בלבד, בלי אפקט על המנוע המהיר עדיין.
+                        html.Div(className="settings-hint",
+                                 children="פרמטרי האסטרטגיה עצמה נמצאים בראש לשונית \"בודק אסטרטגיות\"."),
+                    ]),
+                    html.Div(id="audit-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        html.Div(className="pane-head", children=[
+                            html.Div("ביקורת נתונים", className="pane-title"),
+                            html.Div("מה הבקטסט באמת רץ עליו: תקינות קאש הדקה, פערים, קפיצות, וגלגולי חוזים. "
+                                     "ביקורת על 2.5 מיליון נרות לוקחת כמה שניות.", className="pane-sub"),
+                        ]),
+                        html.Button("▶  הרץ ביקורת על הסימבול הנוכחי", id="audit-run-btn", n_clicks=0, className="run-btn"),
+                        dcc.Loading(html.Div(id="audit-body", style={"marginTop": "12px"}), type="dot", color="#2962FF"),
+                    ]),
+                    html.Div(id="catalog-pane", style={"display": "none"}, className="rtl-pane",
+                             children=_catalog_children()),
+                    html.Div(id="optimize-pane", style={"display": "none"}, className="rtl-pane",
+                             children=_optimizer_children()),
+                    html.Div(id="history-pane", style={"display": "none"}, className="rtl-pane",
+                             children=[html.Div(id="history-list"), html.Div(id="history-compare")]),
+                    html.Div(id="paper-pane", style={"display": "none"}, className="rtl-pane", children=[
+                        html.Div(className="pane-head", children=[
+                            html.Div("מסחר בנייר", className="pane-title"),
+                            html.Div("האסטרטגיה שבעורך רצה על נרות חיים מ-IB ורושמת כניסות ויציאות, בלי לשלוח פקודות. "
+                                     "הלוגיקה זהה לבקטסט: מילוי בפתיחת הנר הבא, אותם סטופ ויעד. עסקאות נספרות מהנר הסגור הראשון אחרי הפתיחה.",
+                                     className="pane-sub"),
+                        ]),
+                        html.Div(className="opt-card", children=[
+                            html.Div(className="opt-row", children=[
+                                html.Div(id="paper-strategy-label", className="opt-engine"),
+                                html.Button("▶  התחל סשן בנייר", id="paper-start-btn", n_clicks=0, className="run-btn",
+                                            title="משתמש בסימבול ובטיים-פריים שנבחרו למעלה ובפרמטרים שבבודק"),
+                                html.Span(id="paper-msg", className="opt-status"),
+                            ]),
+                        ]),
+                        dcc.Interval(id="paper-interval", interval=5000, n_intervals=0),
+                        html.Div(id="paper-body"),
+                    ]),
+                ]),
+            ]),
+            html.Div(id="col-resizer", className="col-resizer", title="גרור לשינוי רוחב · לחיצה כפולה לכיווץ הפאנל"),
             html.Div(className="chart-pane", children=[
                 html.Div(id="chart-container"),
+                html.Div(id="chart-toolbar", className="chart-toolbar", children=[
+                    html.Button("‹", id="ct-prev", className="ct-btn", title="עסקה קודמת (←)"),
+                    html.Span("—", id="ct-counter", className="ct-counter", title="עסקה נוכחית / סה\"כ"),
+                    html.Button("›", id="ct-next", className="ct-btn", title="עסקה הבאה (→)"),
+                    html.Span(className="ct-sep"),
+                    html.Button("⟲", id="ct-fit", className="ct-btn", title="איפוס זום (R)"),
+                    html.Button("⏭", id="ct-now", className="ct-btn", title="קפיצה לעכשיו (N)"),
+                    html.Button("⛶", id="ct-full", className="ct-btn", title="גרף במסך מלא (G)"),
+                    html.Button("⇅", id="ct-layout", className="ct-btn", title="החלפת פריסה: גרף לצד הפאנל / גרף מעל הפאנל"),
+                    html.Span(className="ct-sep"),
+                    html.Button("▶|", id="ct-replay", className="ct-btn", title="צעד אחר צעד (P): מסתיר את העתיד ומתקדם נר-נר מהעסקה הנבחרת"),
+                    html.Button("📷", id="ct-shot", className="ct-btn", title="צילום הגרף ללוח (C), להדבקה בוואטסאפ"),
+                    html.Span(className="ct-sep"),
+                    html.Button("▤", id="ct-eq", className="ct-btn on", title="רצועת עקומת הון (E)"),
+                    html.Button("◐", id="ct-sess", className="ct-btn on", title="הצללת סשן רגיל של ארה\"ב (S)"),
+                    html.Button("▦", id="ct-ctx", className="ct-btn on", title="טווח הבדיקה וחלונות Walk-forward"),
+                    html.Span(className="ct-sep"),
+                    html.Button("─", id="ct-hline", className="ct-btn", title="קו אופקי (H): לחיצה על הגרף"),
+                    html.Button("╱", id="ct-tline", className="ct-btn", title="קו מגמה (T): שתי לחיצות על הגרף"),
+                    html.Button("✕", id="ct-clear", className="ct-btn", title="מחיקת כל הקווים שציירת"),
+                ]),
+                html.Div(id="chart-datawin", className="chart-datawin"),
+                html.Div(id="chart-tooltip", className="chart-tooltip", style={"display": "none"}),
+                html.Div(id="equity-strip", className="equity-strip"),
                 # הספירה-לאחור בפועל היא countdownEl שנוצר דינמית ב-chart.js
                 # (ensureChart), לא div סטטי כאן.
 
@@ -331,169 +726,6 @@ def build_layout() -> html.Div:
                 # UTC+3 בקיץ - קבוע היה מראה שעה שגויה חצי מהשנה).
                 html.Div(id="market-clock", className="market-clock"),
             ]),
-
-            html.Div(className="bottom-panel", children=[
-                html.Div(className="panel-bar", children=[
-                    dcc.Tabs(id="panel-tabs", value="tester", className="panel-tabs",
-                             parent_className="panel-tabs-parent", children=[
-                                 dcc.Tab(label="Strategy Tester", value="tester",
-                                         className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="Settings", value="settings",
-                                         className="ptab", selected_className="ptab-sel"),
-                             ]),
-                    html.Button("⌄", id="panel-toggle", n_clicks=0, className="panel-toggle",
-                                title="פתח/סגור את הפאנל"),
-                ]),
-                html.Div(id="panel-body", className="panel-body", children=[
-                    html.Div(id="tester-pane", children=[
-                        # dcc.Loading עוטף את שני ה-Output-ים של run_or_switch (למטה) -
-                        # Dash מזהה לבד קריאת callback פעילה שמשפיעה על ילד עטוף ומציג
-                        # ספינר אוטומטית. בלי זה, לחיצה על "Add to chart" לא נתנה שום
-                        # משוב חזותי במשך כל משך הריצה (בקטסט על 7 שנות MNQ/1m יכול
-                        # לקחת כ-3 דקות, backtesting.py מריץ בר-אחר-בר בפייתון, לא
-                        # מוקטר) - בדיוק מה שנראה כאילו "הכפתור לא עושה כלום".
-                        dcc.Loading(html.Div(id="key-stats"), type="dot", color="#2962FF"),
-                        dcc.Tabs(id="result-tabs", value="overview", className="result-tabs",
-                                 children=[
-                                     dcc.Tab(label="Overview", value="overview",
-                                             className="rtab", selected_className="rtab-sel"),
-                                     dcc.Tab(label="Performance Summary", value="summary",
-                                             className="rtab", selected_className="rtab-sel"),
-                                     dcc.Tab(label="List of Trades", value="trades",
-                                             className="rtab", selected_className="rtab-sel"),
-                                 ]),
-                        # פילטר תקופה מעל גרף ה-Performance - מוצג רק בלשונית overview
-                        # (ראו run_or_switch: Output("perf-period-bar","style")). Custom Range
-                        # פותח שני שדות תאריך (perf-custom-range) - טוגל טהור ב-JS, בלי
-                        # סבב לשרת (ראו clientside_callback למטה).
-                        dcc.Store(id="perf-period", data="range"),
-                        html.Div(id="perf-period-bar", className="perf-period-bar", children=[
-                            dcc.Dropdown(
-                                id="perf-period-select",
-                                options=[{"label": label, "value": key} for key, label in PERIOD_LABELS.items()],
-                                value="range", clearable=False, searchable=False,
-                                className="perf-period-dropdown",
-                            ),
-                            html.Div(id="perf-custom-range", className="perf-custom-range",
-                                     style={"display": "none"}, children=[
-                                         dcc.Input(id="perf-custom-from", type="date",
-                                                   className="perf-custom-date"),
-                                         html.Span("\u2192", className="perf-custom-arrow"),
-                                         dcc.Input(id="perf-custom-to", type="date",
-                                                   className="perf-custom-date"),
-                                     ]),
-                        ]),
-                        dcc.Loading(html.Div(id="result-body", className="result-body",
-                                 children=_html(panels.empty(
-                                     "פתחו Settings ← Strategy, כתבו אסטרטגיה ולחצו "
-                                     "\u25b6 Add to chart כדי לראות ביצועים."))),
-                                    type="dot", color="#2962FF"),
-                        # ניווט עמודים ל"List of Trades" - מוצג רק בלשונית trades וכשיש
-                        # יותר מ-TRADES_PAGE_SIZE עסקאות (ראו run_or_switch/_trades_pagination_state).
-                        dcc.Store(id="trades-page", data=0),
-                        html.Div(id="trades-pagination", className="trades-pagination",
-                                 style={"display": "none"}, children=[
-                                     html.Button("\u2039 Prev", id="trades-prev-btn", n_clicks=0,
-                                                 className="trades-page-btn"),
-                                     html.Span(id="trades-page-info", className="trades-page-info"),
-                                     html.Button("Next \u203a", id="trades-next-btn", n_clicks=0,
-                                                 className="trades-page-btn"),
-                                 ]),
-                    ]),
-                    # Settings: שתי תת-לשוניות - "Strategy" (עורך הקוד/Pine Editor, נפתחת
-                    # כברירת מחדל - value="strategy") ו-"Account" (הגדרות חשבון/ביצוע,
-                    # שהיו קודם כל תוכן לשונית Settings לבדה). switch_settings_subtab
-                    # למטה מטפל במעבר ביניהן, באותה מוסכמה בדיוק כמו switch_panel_tab.
-                    html.Div(id="settings-pane", style={"display": "none"}, children=[
-                        html.Div(className="settings-subtabs-bar", children=[
-                            dcc.Tabs(id="settings-subtabs", value="strategy",
-                                     className="settings-subtabs", children=[
-                                         dcc.Tab(label="Strategy", value="strategy",
-                                                 className="stab", selected_className="stab-sel"),
-                                         dcc.Tab(label="Account", value="account",
-                                                 className="stab", selected_className="stab-sel"),
-                                     ]),
-                        ]),
-                        html.Div(id="settings-strategy-subpane", children=[
-                            html.Div(className="editor-row", children=[
-                                html.Div("כתוב def init(self) ו-def next(self). "
-                                         "זמינים: self.vwap (מתאפס כל יום), self.position_size, "
-                                         "sma / ema / rsi / crossover.", className="editor-hint"),
-                                html.Div(className="editor-controls", children=[
-                                    # ספריית האסטרטגיות (רשימת שמורות + Save/Delete) - כפתור
-                                    # רגיל בזרימה רגילה עם תפריט נפתח מתחתיו (position:relative
-                                    # על strategy-lib-wrap), לא אלמנט צף הממוקם ב-JS מעל
-                                    # כותרת-לשונית כמו קודם: עכשיו זה סתם תוכן בתוך תת-הלשונית
-                                    # "Strategy", לא צריך יותר את הטריק הזה.
-                                    html.Div(className="strategy-lib-wrap", children=[
-                                        html.Button([
-                                            html.Span("Strategy library", className="strategy-lib-btn-label"),
-                                            html.Span("▾", className="strategy-lib-caret"),
-                                        ], id="strategy-lib-arrow", className="strategy-lib-btn",
-                                            title="Strategy library"),
-                                        html.Div(id="strategy-lib-menu", className="strategy-lib-menu",
-                                                 style={"display": "none"}),
-                                    ]),
-                                    html.Button("▶  Add to chart", id="run-btn", n_clicks=0,
-                                                className="run-btn",
-                                                title="בקטסט על כל ההיסטוריה"),
-                                ]),
-                            ]),
-                            dcc.Textarea(id="code-input", value=DEFAULT_CODE, className="code-area",
-                                         spellCheck=False),
-                            html.Div(id="run-error", className="run-error"),
-                        ]),
-                        html.Div(id="settings-account-subpane", style={"display": "none"}, children=[
-                            html.Div(className="settings-hint",
-                                     children="הגדרות חשבון וביצוע — משפיעות על חישוב הבקטסט "
-                                              "(PnL, סליפג' ועמלות) בלחיצה הבאה על Add to chart."),
-                            html.Div(className="settings-grid", children=[
-                                html.Div(className="settings-field", children=[
-                                    html.Span("Account Value", className="ctl-label"),
-                                    dcc.Input(id="account-value-input", type="number", value=100000,
-                                              min=1000, className="num-input tiny", debounce=True),
-                                ]),
-                                html.Div(className="settings-field", children=[
-                                    html.Span("Contracts per trade", className="ctl-label"),
-                                    dcc.Input(id="contracts-input", type="number", value=1, min=1,
-                                              step=1, className="num-input tiny", debounce=True),
-                                ]),
-                                html.Div(className="settings-field", children=[
-                                    html.Span("Contract multiplier", className="ctl-label"),
-                                    dcc.Input(id="multiplier-input", type="number", value=2, min=0,
-                                              step=0.01, className="num-input tiny", debounce=True),
-                                ]),
-                                html.Div(className="settings-field", children=[
-                                    html.Span("Slippage (ticks)", className="ctl-label"),
-                                    dcc.Input(id="slippage-input", type="number", value=2, min=0,
-                                              step=1, className="num-input tiny", debounce=True),
-                                ]),
-                                html.Div(className="settings-field", children=[
-                                    html.Span("Commission / contract", className="ctl-label"),
-                                    dcc.Input(id="settings-commission-input", type="number", value=0,
-                                              min=0, step=0.01, className="num-input tiny", debounce=True),
-                                ]),
-                                html.Div(className="settings-field", children=[
-                                    html.Span("Order type", className="ctl-label"),
-                                    dcc.Dropdown(id="order-type-input", className="settings-dropdown",
-                                                 options=[{"label": "Market", "value": "Market"},
-                                                          {"label": "Limit", "value": "Limit"}],
-                                                 value="Market", clearable=False, searchable=False),
-                                ]),
-                            ]),
-                            # "Strategy Inputs" - שדות שזוהו אוטומטית מ-"# input" בקוד ה-Pine
-                            # Editor (ראו strategy.parse_strategy_inputs/_strategy_inputs_section).
-                            # מתעדכן בכל שינוי בקוד (Input("code-input","value") למטה); הערכים
-                            # שהמשתמש עורך כאן נקראים ב-run_or_switch דרך pattern-matching
-                            # State ומשפיעים בפועל רק על שמות מוכרים (RECOGNIZED_STRATEGY_INPUTS) -
-                            # שאר השדות מוצגים לשקיפות בלבד, בלי אפקט על המנוע המהיר עדיין.
-                            html.Div(className="settings-section-title", children="Strategy Inputs"),
-                            html.Div(id="strategy-inputs-container",
-                                     children=_strategy_inputs_section(DEFAULT_CODE)),
-                        ]),
-                    ]),
-                ]),
-            ]),
         ]),
 
         # מודל "שם אסטרטגיה" - נפתח מ-"Save current strategy"/"Save as new strategy"
@@ -519,7 +751,10 @@ def build_layout() -> html.Div:
 
 app = Dash(
     __name__,
-    title="Strategy Dashboard",
+    title="Strategy Lab",
+    external_stylesheets=[
+        "https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap",
+    ],
     external_scripts=[
         # גרסה מוצמדת בכוונה: גרסה צפה עלולה לקפוץ ל-major חדש ולשבור את ה-API.
         "https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"
@@ -554,18 +789,25 @@ def load_chart(symbol, timeframe):
     symbol = (symbol or "").strip().upper()
     if not symbol:
         return no_update, "הזן סימבול", "status error"
+    from_cache_note = ""
     try:
         df = load_ohlcv_preferring_1m_cache(symbol, timeframe, days=INITIAL_DAYS[timeframe], extended_hours=True)
     except DataError as exc:
-        return no_update, str(exc), "status error"
+        # IB לא זמין (Gateway סגור / API כבוי): מציגים את הקאש המקומי במקום גרף שחור.
+        cached = load_full_history(symbol, timeframe, extended_hours=True)
+        if cached is None or cached.empty:
+            return no_update, str(exc), "status error"
+        cutoff = cached.index[-1] - pd.Timedelta(days=INITIAL_DAYS[timeframe])
+        df = cached[cached.index >= cutoff]
+        from_cache_note = " · מהקאש (IB מנותק)"
 
     _FRAMES[(symbol, timeframe)] = df
     _RESULTS.pop("last", None)
     live.subscribe(symbol, timeframe)  # מעביר את מנוי ה-streaming לסימבול/טיים-פריים החדשים
     years = (df.index.max() - df.index.min()).days / 365.25
     status = (f"{len(df):,} bars · {df.index.min():%b %d, %Y} → {df.index.max():%b %d, %Y} "
-              f"({years:.1f}y)")
-    return build_payload(df, symbol, timeframe), status, "status"
+              f"({years:.1f}y){from_cache_note}")
+    return build_payload(df, symbol, timeframe), status, ("status warn" if from_cache_note else "status")
 
 
 @callback(
@@ -598,7 +840,6 @@ def push_live_update(_n, symbol, timeframe):
         payload["secondsToClose"] = live.seconds_to_close(timeframe)
     if bar:
         print(f"Sending live bar to chart: close={bar['close']}", flush=True)
-        print(f"Sending to chart: close={bar['close']}", flush=True)
     return payload
 
 
@@ -741,6 +982,7 @@ def api_markers():
                           "markers": markers, "note": note})
 
 
+# ------------------------------------------------------ ספריית אסטרטגיות (Pine Editor)
 @app.server.route("/api/overnight_levels")
 def api_overnight_levels():
     """נתיב Flask ישיר (כמו /api/lod, /api/markers) לאינדיקטור-התצוגה "Overnight
@@ -789,11 +1031,10 @@ def api_overnight_levels():
     return flask.jsonify({"symbol": symbol, "levels": rows})
 
 
-# ------------------------------------------------------ ספריית אסטרטגיות (Pine Editor)
 @app.server.route("/api/strategies")
 def api_strategies_list():
     """כל האסטרטגיות השמורות (שם/קוד/הגדרות) - assets/strategy_library.js קורא
-    לזה בכל פתיחה של תפריט "Strategy library" (Settings ← Strategy)."""
+    לזה בכל פתיחה של התפריט ליד לשונית Pine Editor."""
     with _STRATEGIES_LOCK:
         strategies = _load_strategies()
     return flask.jsonify({"strategies": strategies})
@@ -848,29 +1089,29 @@ def toggle_panel(_n, is_open):
 
 @callback(
     Output("tester-pane", "style"),
+    Output("editor-pane", "style"),
     Output("settings-pane", "style"),
-    Input("panel-tabs", "value"),
+    Output("catalog-pane", "style"),
+    Output("optimize-pane", "style"),
+    Output("history-pane", "style"),
+    Output("paper-pane", "style"),
+    Output("more-pane", "style"),
+    Output("audit-pane", "style"),
+    Input("panel-tabs", "value"), Input("more-tabs", "value"),
 )
-def switch_panel_tab(tab):
+def switch_panel_tab(tab, more):
     show, hide = {"display": "block"}, {"display": "none"}
+    in_more = tab == "more"
     return (
         show if tab == "tester" else hide,
-        show if tab == "settings" else hide,
-    )
-
-
-@callback(
-    Output("settings-strategy-subpane", "style"),
-    Output("settings-account-subpane", "style"),
-    Input("settings-subtabs", "value"),
-)
-def switch_settings_subtab(subtab):
-    """תת-הלשוניות של Settings - "Strategy" (עורך הקוד, ברירת המחדל) ו-"Account"
-    (הגדרות חשבון/ביצוע) - אותה מוסכמה בדיוק כמו switch_panel_tab למעלה."""
-    show, hide = {"display": "block"}, {"display": "none"}
-    return (
-        show if subtab != "account" else hide,
-        show if subtab == "account" else hide,
+        show if (in_more and more == "editor") else hide,
+        show if (in_more and more == "settings") else hide,
+        show if (in_more and more == "catalog") else hide,
+        show if tab == "optimize" else hide,
+        show if tab == "history" else hide,
+        show if tab == "paper" else hide,
+        show if in_more else hide,
+        show if (in_more and more == "audit") else hide,
     )
 
 
@@ -879,10 +1120,10 @@ def switch_settings_subtab(subtab):
     Input("code-input", "value"),
 )
 def update_strategy_inputs(code):
-    """מרענן את "Strategy Inputs" (לשונית Settings ← Account) בכל שינוי בקוד
-    ה-Pine Editor - ראו _strategy_inputs_section. שים לב: זה בונה את השדות
-    מחדש מהערכים שבטקסט הקוד עצמו, כך שעריכת ערך שדה ואז שינוי חלק *אחר* של
-    הקוד תאפס אותו שדה בחזרה לברירת המחדל שבטקסט - מגבלה מוכרת, לא נפתרה כאן."""
+    """מרענן את "Strategy Inputs" (לשונית Settings) בכל שינוי בקוד ה-Pine Editor -
+    ראו _strategy_inputs_section. שים לב: זה בונה את השדות מחדש מהערכים
+    שבטקסט הקוד עצמו, כך שעריכת ערך שדה ואז שינוי חלק *אחר* של הקוד תאפס אותו
+    שדה בחזרה לברירת המחדל שבטקסט - מגבלה מוכרת, לא נפתרה כאן."""
     return _strategy_inputs_section(code or "")
 
 
@@ -893,12 +1134,12 @@ def _trades_pagination_state(tab: str, trade_count: int, page: int):
         return {"display": "none"}, ""
     n_pages = max(1, -(-trade_count // TRADES_PAGE_SIZE))  # ceil division
     return ({"display": "flex"},
-            f"Page {page + 1} / {n_pages} ({trade_count:,} trades)")
+            f"עמוד {page + 1} מתוך {n_pages} · {trade_count:,} עסקאות")
 
 
 def _perf_period_bar_style(tab: str):
     """פילטר התקופה רלוונטי רק לגרף ה-Overview - מוסתר בשאר הלשוניות."""
-    return {"display": "flex"} if tab == "overview" else {"display": "none"}
+    return {"display": "none"}
 
 
 def _filter_trades_by_period(trades: pd.DataFrame, period: str,
@@ -930,14 +1171,9 @@ def _filter_trades_by_period(trades: pd.DataFrame, period: str,
 
 
 def _key_stats_body(stats, cash: float, period: str, custom_from, custom_to):
-    """Key stats תמיד לפי הפילטר הנוכחי - גם כשלא נמצאים בלשונית Overview
-    (הכותרת יושבת מעל הלשוניות, לא בתוכן, ראו requirement המפורש)."""
-    trades = stats["_trades"]
-    if trades.empty or not period or period in ("range", "all"):
-        return _html(panels.key_stats(stats, cash))
-    filtered = _filter_trades_by_period(trades, period, custom_from, custom_to)
-    label = PERIOD_LABELS.get(period, period)
-    return _html(panels.key_stats_for_period(filtered, cash, len(trades), label))
+    """כרטיסי ה-KPI בראש התוצאות (results.kpi_tiles). פילטר התקופה הישן בוטל -
+    הטווח נבחר לפני הריצה בסרגל העבודה."""
+    return results.kpi_tiles(stats, cash)
 
 
 # ---------------------------------------------------------------- הרצת אסטרטגיה
@@ -970,13 +1206,14 @@ def _key_stats_body(stats, cash: float, period: str, custom_from, custom_to):
     State({"type": "strategy-input", "name": ALL}, "value"),
     State({"type": "strategy-input", "name": ALL}, "id"),
     State("trades-page", "data"),
+    State("bt-range", "value"),
     prevent_initial_call=True,
 )
 def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_from, custom_to,
                    symbol, timeframe, _code,
                    account_value, contracts, multiplier, slippage_ticks,
                    commission_per_contract, order_type,
-                   strategy_input_values, strategy_input_ids, current_page):
+                   strategy_input_values, strategy_input_ids, current_page, bt_range="all"):
     """מריץ בקטסט על כל ההיסטוריה (run-window-store, מ-"Add to chart" - כן, למרות
     השם: לפי בקשה מפורשת "Add to chart" רץ תמיד על כל הקאש), או רק מציג תוצאות
     שכבר קיימות ב-_RESULTS["last"] אחרי החלפת לשונית-תוצאות רגילה/דפדוף בטבלת
@@ -1005,43 +1242,19 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
         if isinstance(id_dict, dict) and id_dict.get("name")
     }
 
-    # מגן מפני race condition בזמן החלפת אסטרטגיה מהתפריט: loadAndRun
-    # ב-strategy_library.js משנה כמה props בבת אחת (code-input, ואז מיד
-    # run-window-store) בלי לחכות שהשרת יספיק לעדכן את strategy-inputs-container
-    # לברירות-המחדל של האסטרטגיה *החדשה* קודם - אז ה-State כאן עלול לשקף
-    # עדיין את שדות-הקלט של האסטרטגיה ה*קודמת*. מזהים את זה בכך שקבוצת השמות
-    # שהתקבלה לא תואמת את מה ש-parse_strategy_inputs מפרש כרגע מתוך _code (שכן
-    # מתעדכן תמיד, כי code-input עצמו הוא ה-State שקרא ל-callback הזה בכלל) -
-    # אם לא תואם, ה-container בבירור עדיין לא התעדכן: מתעלמים מכל ה-overrides
-    # (שייכים לאסטרטגיה הקודמת) ומשתמשים בברירות-המחדל המובנות של המנוע עצמו,
-    # שתמיד נכונות לקוד הנוכחי.
+    # מגן מפני race condition (מאיתי): החלפת אסטרטגיה מהספרייה משנה את code-input
+    # ואת run-window-store כמעט יחד, ולפעמים שדות-הקלט ב-State עדיין שייכים
+    # לאסטרטגיה הקודמת. אם קבוצת השמות לא תואמת לקוד הנוכחי - מתעלמים מהם
+    # ומשתמשים בברירות-המחדל של המנוע.
     current_input_names = {item["name"] for item in parse_strategy_inputs(_code)}
-    provided_names = {
-        id_dict.get("name") for id_dict in strategy_input_ids if isinstance(id_dict, dict)
-    }
-    if current_input_names != provided_names:
+    provided_names = {id_dict.get("name") for id_dict in strategy_input_ids if isinstance(id_dict, dict)}
+    if provided_names and current_input_names != provided_names:
         strategy_overrides = {}
-
-    def _override(engine_param: str, default, caster=float):
-        """קלט מוכר בודד: RECOGNIZED_STRATEGY_INPUTS ממפה כמה שמות-משתנה
-        אפשריים לאותו engine_param (למשל SMA_LENGTH/SMA_PERIOD -> sma_period) -
-        לוקחים את הראשון שבאמת מופיע בקוד הנוכחי."""
-        for name, param in RECOGNIZED_STRATEGY_INPUTS.items():
-            if param != engine_param:
-                continue
-            raw = strategy_overrides.get(name)
-            if raw is None:
-                continue
-            try:
-                return caster(raw)
-            except (TypeError, ValueError):
-                continue
-        return default
 
     # בוחרים איזה מנוע וקטורי להריץ לפי שורת-הסימון הראשונה בקוד (# strategy:
     # <key>) - לא מריצים את הקוד עצמו. בלי סימון (DEFAULT_CODE, או אסטרטגיה
     # ישנה שנשמרה לפני התכונה הזו) - ברירת המחדל היא חציית-SMA, כמו קודם.
-    builtin_key = detect_builtin_strategy(_code)
+    builtin_key = lab.engine_key_for_code(_code)
 
     if triggered == "run-window-store":
         # תמיד כל ההיסטוריה - לא רק החלון הנראה בגרף (ראו הערת הפונקציה למעלה).
@@ -1057,6 +1270,10 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
         if df_backtest is None:
             return (no_update, no_update, no_update, "טען נתונים קודם", no_update,
                     no_update, no_update, no_update, no_update)
+        df_backtest, range_label = lab.slice_range(df_backtest, bt_range, _window_data, from_display_epoch)
+        if df_backtest is None or len(df_backtest) < 50:
+            return (no_update, no_update, no_update, "אין מספיק נרות בטווח שנבחר", no_update,
+                    no_update, no_update, no_update, no_update)
         print(f"[backtest] source={source} (button='Add to chart') "
               f"symbol={symbol} timeframe={timeframe} "
               f"Backtest running on {len(df_backtest):,} bars from "
@@ -1067,64 +1284,25 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
             slippage_ticks=float(slippage_ticks or 0),
             commission_per_contract=float(commission_per_contract or 0),
             market_order=(order_type != "Limit"),
+            exit_slippage_ticks=float(_RESULTS.get("exit_slip", 3)), fill_mode=_RESULTS.get("fill_mode", "realistic"),
         )
         try:
-            if builtin_key == "hammer_breakout":
-                # "hammer_breakout" נשאר כאן בכוונה (המנוע עצמו, run_hammer_breakout_backtest,
-                # לא הוסר מ-strategy.py) - האסטרטגיה השמורה "hamer std" משתמשת
-                # בסימון הזה בקוד שלה, אז חייבים לשמור על הענף הזה כדי שהיא
-                # תמשיך לעבוד, למרות שהערך המובנה "Hammer Breakout" הוסר
-                # מ-BUILTIN_STRATEGIES (התפריט) לפי בקשה מפורשת.
-                stats = run_hammer_breakout_backtest(
-                    df_backtest, **common_kwargs,
-                    stop_loss_pts=_override("stop_loss_pts", 20.0),
-                    max_body_pts=_override("max_body_pts", 7.0),
-                    min_std_before=_override("min_std_before", 20.0),
-                    exclude_open_hours=_override("exclude_open_hours", True, caster=bool),
-                    peak_distance_pts=_override("peak_distance_pts", 30.0),
-                    exit_distance_pts=_override("exit_distance_pts", 15.0),
-                )
-            elif builtin_key == "hammer_swing_exit":
-                stats = run_hammer_swing_exit_backtest(
-                    df_backtest, **common_kwargs,
-                    stop_loss_pts=_override("stop_loss_pts", 5.0),
-                    max_body_pts=_override("max_body_pts", 7.0),
-                    break_even_pts=_override("break_even_pts", 10.0),
-                    use_break_even=_override("use_break_even", True, caster=bool),
-                )
-            elif builtin_key == "sma20_mean_reversion":
-                stats = run_sma20_mean_reversion_backtest(
-                    df_backtest, **common_kwargs,
-                    min_distance_pts=_override("min_distance_pts", 20.0),
-                    stop_loss_pts=_override("stop_loss_pts", 15.0),
-                )
-            elif builtin_key == "down_streak_reversion":
-                stats = run_down_streak_reversion_backtest(
-                    df_backtest, **common_kwargs,
-                    streak_length=int(_override("streak_length", 3)),
-                    hold_bars=int(_override("hold_bars", 1)),
-                    use_prior_low_exit=_override("use_prior_low_exit", False, caster=bool),
-                    use_stop_loss=_override("use_stop_loss", False, caster=bool),
-                    stop_loss_pts=_override("stop_loss_pts", 5.0),
-                    use_volatility_filter=_override("use_volatility_filter", True, caster=bool),
-                    volatility_threshold=_override("volatility_threshold", 0.0004),
-                )
-            elif builtin_key == "overnight_val_reversion":
-                stats = run_overnight_val_reversion_backtest(
-                    df_backtest, **common_kwargs,
-                    stop_loss_pts=_override("stop_loss_pts", 50.0),
-                    take_profit_pts=_override("take_profit_pts", 90.0),
-                )
-            else:
-                stats = run_fast_sma_crossover_backtest(
-                    df_backtest, **common_kwargs,
-                    sma_period=int(_override("sma_period", 20)),
-                )
+            stats = lab.run_engine(builtin_key, df_backtest, common_kwargs, strategy_overrides)
         except StrategyCompileError as exc:
             return (no_update, no_update, no_update, str(exc), no_update,
                     no_update, no_update, no_update, no_update)
         _RESULTS["last"] = (stats, cash, symbol, timeframe)
-        trade_count = len(stats["_trades"])
+        _RESULTS["last_range"] = (df_backtest.index[0], df_backtest.index[-1])
+        _RESULTS.pop("wf", None)
+        rec = lab.record_run(key=builtin_key, symbol=symbol, timeframe=timeframe, range_label=range_label,
+                             params=strategy_overrides, stats=stats, cash=cash)
+        _RESULTS["last_label"] = (f"ריצה #{rec['id']} · {rec['title']} · {symbol} {timeframe} · "
+                                  f"{range_label} · {len(df_backtest):,} נרות · {rec['at']}")
+        _RESULTS.setdefault("by_engine", {})[builtin_key] = {
+            "symbol": symbol, "timeframe": timeframe, "at": pd.Timestamp.now().strftime("%d/%m %H:%M"),
+            "stats": lab.quick_stats(stats, cash), "params": dict(strategy_overrides),
+        }
+        trade_count = results.filtered_count(stats, _RESULTS.get("trade_filter"))
         # לא שולחים סימונים כאן בכלל - assets/chart.js מבקש אותם לפי דרישה
         # דרך /api/markers ברגע שהוא רואה backtestReady, על הטווח הנראה כרגע
         # בגרף, ואז שוב בכל שינוי טווח (בדיוק כמו LOD לנרות עצמם).
@@ -1143,7 +1321,7 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
         return (no_update, no_update, no_update, no_update, no_update,
                 no_update, no_update, no_update, no_update)
     stats, cash, _saved_symbol, _saved_timeframe = saved
-    trade_count = len(stats["_trades"])
+    trade_count = results.filtered_count(stats, _RESULTS.get("trade_filter"))
     page = current_page or 0
     n_pages = max(1, -(-trade_count // TRADES_PAGE_SIZE))
     if triggered == "trades-next-btn":
@@ -1165,22 +1343,788 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
 def _result_body(tab: str, stats, cash: float, page: int = 0,
                  period: str = "range", custom_from: str | None = None, custom_to: str | None = None):
     if tab == "summary":
-        return _html(panels.performance_summary(stats, cash))
+        return results.performance_table(stats, cash)
     if tab == "trades":
-        return _html(panels.trades_list(stats, page=page, page_size=TRADES_PAGE_SIZE))
+        return results.trades_table(stats, page=page, page_size=TRADES_PAGE_SIZE, flt=_RESULTS.get("trade_filter"))
+    if tab == "monthly":
+        return results.monthly(stats, cash)
+    if tab == "montecarlo":
+        return results.monte_carlo_view(stats, cash)
+    return results.overview(stats, cash)
 
-    # tab == "overview": כאן בלבד מוחל פילטר התקופה - Performance Summary/List
-    # of Trades תמיד מציגים את כל ההיסטוריה (ראו requirement המפורש).
-    trades = stats["_trades"]
-    if trades.empty:
-        return _html(panels.empty("לא בוצעו עסקאות."))
-    filtered = _filter_trades_by_period(trades, period, custom_from, custom_to)
-    if filtered.empty:
-        return _html(panels.empty("אין עסקאות בטווח התאריכים שנבחר."))
-    fig = build_performance_chart(filtered, start_time=filtered["EntryTime"].min())
-    fig.update_layout(height=260, margin=dict(l=10, r=80, t=28, b=10))
-    return dcc.Graph(figure=fig, config={"displayModeBar": False},
-                     style={"height": "260px"})
+
+
+# ================================================================ מעבדת אסטרטגיות (lab.py)
+def _opt_param_options(code: str):
+    key = lab.engine_key_for_code(code)
+    present = {it["name"] for it in parse_strategy_inputs(code or "")}
+    opts = [{"label": lab.param_label(name), "value": name}
+            for name, _p, caster, _d in lab.engine_params(key)
+            if caster is not None and name in present]
+    return key, opts
+
+
+@callback(
+    Output("opt-p1", "options"), Output("opt-p2", "options"),
+    Output("opt-p1", "value"), Output("opt-engine-label", "children"),
+    Output("wb-title", "children"), Output("paper-strategy-label", "children"),
+    Output("strategy-select", "value"), Output("engine-key", "children"),
+    Input("code-input", "value"),
+)
+def refresh_opt_params(code):
+    key, opts = _opt_param_options(code)
+    first = opts[0]["value"] if opts else None
+    title = lab.ENGINES[key]["title"]
+    return opts, opts, first, f"אסטרטגיה בעורך: {title}", title, f"אסטרטגיה: {title}", key, key
+
+
+def _suggest_range(name, code):
+    """טווח התחלתי סביר סביב הערך שבקוד: חצי עד כפול, בכ-8 צעדים."""
+    if not name:
+        return None, None, None
+    cur = lab.code_overrides(code).get(name)
+    if not isinstance(cur, (int, float)) or isinstance(cur, bool):
+        return None, None, None
+    cur = float(cur)
+    if cur == 0:
+        return 0, 10, 1
+    lo, hi = cur * 0.5, cur * 2.0
+    step = (hi - lo) / 8
+    if float(cur).is_integer() and cur >= 4:
+        lo, hi, step = int(round(lo)), int(round(hi)), max(1, int(round(step)))
+    else:
+        step = round(step, 3)
+    return lo, hi, step
+
+
+@callback(
+    Output("opt-p1-min", "value"), Output("opt-p1-max", "value"), Output("opt-p1-step", "value"),
+    Input("opt-p1", "value"), State("code-input", "value"),
+)
+def suggest_p1_range(name, code):
+    return _suggest_range(name, code)
+
+
+@callback(
+    Output("opt-p2-min", "value"), Output("opt-p2-max", "value"), Output("opt-p2-step", "value"),
+    Input("opt-p2", "value"), State("code-input", "value"),
+)
+def suggest_p2_range(name, code):
+    return _suggest_range(name, code)
+
+
+@callback(
+    Output("opt-results", "children"), Output("opt-store", "data"), Output("opt-status", "children"),
+    Input("opt-run-btn", "n_clicks"),
+    State("code-input", "value"), State("symbol-input", "value"), State("tf-store", "data"),
+    State("account-value-input", "value"), State("contracts-input", "value"),
+    State("multiplier-input", "value"), State("slippage-input", "value"),
+    State("settings-commission-input", "value"), State("order-type-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"),
+    State({"type": "strategy-input", "name": ALL}, "id"),
+    State("opt-p1", "value"), State("opt-p1-min", "value"), State("opt-p1-max", "value"), State("opt-p1-step", "value"),
+    State("opt-p2", "value"), State("opt-p2-min", "value"), State("opt-p2-max", "value"), State("opt-p2-step", "value"),
+    State("bt-range", "value"),
+    prevent_initial_call=True,
+)
+def run_optimizer(n_clicks, code, symbol, timeframe, account_value, contracts, multiplier, slippage_ticks,
+                  commission, order_type, in_vals, in_ids, p1, p1_lo, p1_hi, p1_st, p2, p2_lo, p2_hi, p2_st,
+                  bt_range="all"):
+    if not n_clicks:
+        return no_update, no_update, no_update
+    symbol = (symbol or "").strip().upper()
+    key = lab.engine_key_for_code(code)
+    grid = {}
+    if p1:
+        vals = lab.value_grid(p1_lo, p1_hi, p1_st)
+        if not vals:
+            return html.Div("טווח לא תקין לפרמטר 1 (מ- / עד / צעד).", className="run-error"), no_update, ""
+        grid[p1] = vals
+    if p2 and p2 != p1:
+        vals = lab.value_grid(p2_lo, p2_hi, p2_st)
+        if not vals:
+            return html.Div("טווח לא תקין לפרמטר 2.", className="run-error"), no_update, ""
+        grid[p2] = vals
+    if not grid:
+        return html.Div("בחר לפחות פרמטר אחד.", className="run-error"), no_update, ""
+    df = load_full_history(symbol, timeframe, extended_hours=True)
+    if df is None:
+        df = _FRAMES.get((symbol, timeframe))
+    if df is None:
+        return html.Div("טען נתונים קודם (בחר סימבול וטיים-פריים למעלה).", className="run-error"), no_update, ""
+    df, range_label = lab.slice_range(df, "all" if bt_range == "chart" else bt_range, None)
+    overrides = lab.code_overrides(code)
+    overrides.update({
+        id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+        for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")
+    })
+    common = dict(cash=float(account_value or 100_000), size=float(contracts or 1),
+                  multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
+                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"),
+                  exit_slippage_ticks=float(_RESULTS.get("exit_slip", 3)), fill_mode=_RESULTS.get("fill_mode", "realistic"))
+    res = lab.optimize(key, df, common, overrides, grid)
+    rows = res["rows"]
+    if not rows:
+        return html.Div("לא התקבלו תוצאות.", className="run-error"), no_update, ""
+    header = [html.Th(lab.param_en(n), title=f"{lab.param_he(n)} ({n})") for n in res["names"]] + [
+        html.Th("עסקאות"), html.Th("זכייה %"), html.Th("PF"), html.Th("רווח נקי"), html.Th("DD %"),
+        html.Th("מחוץ למדגם: רווח"), html.Th("מחוץ למדגם: PF"), html.Th("")]
+    body = []
+    for i, r in enumerate(rows[:60]):
+        a, b = r["in"], r["out"]
+        body.append(html.Tr(className=("opt-best" if i == 0 else ""), children=(
+            [html.Td(f"{v:g}") for v in r["params"].values()] + [
+                html.Td(a["trades"]), html.Td(f"{a['win_rate']:.0f}"), html.Td(f"{a['pf']:.2f}"),
+                html.Td(_fmt_money(a["net"]), className=("pos" if a["net"] > 0 else "neg")),
+                html.Td(f"{a['max_dd_pct']:.1f}"),
+                html.Td(_fmt_money(b["net"]), className=("pos" if b["net"] > 0 else "neg")),
+                html.Td(f"{b['pf']:.2f}"),
+                html.Td(html.Button("החל", id={"type": "opt-apply", "index": i}, n_clicks=0, className="cat-btn")),
+            ])))
+    note = (f"{res['n_combos']} שילובים ב-{res['seconds']:.1f} שניות · {symbol} {timeframe} · {range_label} · "
+            f"במדגם {res['in_from']} עד {res['in_to']} · מחוץ למדגם {res['out_from']} עד {res['out_to']}"
+            + (" · נחתך ל-400 שילובים, צמצם את הטווח" if res["truncated"] else ""))
+    table = html.Table(className="opt-table", children=[html.Thead(html.Tr(header)), html.Tbody(body)])
+    store = [r["params"] for r in rows[:60]]
+    return [html.Div(note, className="opt-note"), html.Div(table, className="opt-table-wrap")], store, ""
+
+
+@callback(
+    Output("code-input", "value", allow_duplicate=True),
+    Output("panel-tabs", "value", allow_duplicate=True),
+    Output("opt-status", "children", allow_duplicate=True),
+    Input({"type": "opt-apply", "index": ALL}, "n_clicks"),
+    State("opt-store", "data"), State("code-input", "value"),
+    prevent_initial_call=True,
+)
+def apply_optimized(n_clicks_list, store, code):
+    trig = callback_context.triggered_id
+    if not isinstance(trig, dict) or not any(n for n in n_clicks_list if n):
+        return no_update, no_update, no_update
+    idx = trig.get("index")
+    if store is None or idx is None or idx >= len(store):
+        return no_update, no_update, no_update
+    return lab.apply_inputs_to_code(code, store[idx]), "editor", "הערכים הוחלו בעורך וב-Settings. לחץ Add to chart להרצה מלאה."
+
+
+@callback(
+    Output("code-input", "value", allow_duplicate=True),
+    Output("panel-tabs", "value", allow_duplicate=True),
+    Output("run-btn", "n_clicks", allow_duplicate=True),
+    Input({"type": "catalog-load", "key": ALL}, "n_clicks"),
+    Input({"type": "catalog-run", "key": ALL}, "n_clicks"),
+    State("run-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def catalog_action(load_clicks, run_clicks, run_n):
+    trig = callback_context.triggered_id
+    if not isinstance(trig, dict) or not (any(n for n in load_clicks if n) or any(n for n in run_clicks if n)):
+        return no_update, no_update, no_update
+    key = trig.get("key")
+    if key not in lab.ENGINES:
+        return no_update, no_update, no_update
+    code = lab.ENGINES[key]["code"]
+    if trig.get("type") == "catalog-run":
+        # העלאת n_clicks של "Add to chart" מפעילה את אותה שרשרת בדיוק כמו לחיצה ידנית
+        return code, "tester", (run_n or 0) + 1
+    return code, "editor", no_update
+
+
+@callback(
+    Output("catalog-pane", "children"),
+    Input("panel-tabs", "value"),
+    prevent_initial_call=True,
+)
+def refresh_catalog(tab):
+    if tab != "more":
+        return no_update
+    return _catalog_children()
+
+
+
+# ---------------------------------------------------------------- שלב 2: סרגל עבודה + היסטוריה
+@callback(
+    Output("run-btn", "n_clicks", allow_duplicate=True),
+    Input("tester-run-btn", "n_clicks"), State("run-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def tester_run(n, run_n):
+    if not n:
+        return no_update
+    return (run_n or 0) + 1
+
+
+@callback(Output("run-label", "children"), Input("key-stats", "children"), prevent_initial_call=True)
+def show_run_label(_):
+    return _RESULTS.get("last_label", "")
+
+
+def _history_list_children():
+    if not lab.RUN_HISTORY:
+        return html.Div(className="empty-state", children=[
+            html.Div("עדיין אין ריצות", className="empty-title"),
+            html.Div("כל לחיצה על \"הרץ בדיקה\" או \"טען והרץ\" נרשמת כאן, ואפשר להשוות בין ריצות.", className="empty-sub")])
+    header = html.Tr([html.Th("השווה"), html.Th("#"), html.Th("שעה"), html.Th("אסטרטגיה"), html.Th("סימבול"),
+                      html.Th("טווח"), html.Th("עסקאות"), html.Th("זכייה %"), html.Th("PF"), html.Th("רווח נקי"),
+                      html.Th("DD %"), html.Th("פרמטרים"), html.Th("")])
+    rows = []
+    for r in lab.RUN_HISTORY:
+        q = r["q"]
+        params = " · ".join(f"{lab.param_en(k)}: {lab.fmt_value(v)}" for k, v in r["params"].items())
+        rows.append(html.Tr(**{"data-run": r["id"]}, children=[
+            html.Td(dcc.Checklist(id={"type": "hist-sel", "index": r["id"]}, options=[{"label": "", "value": "on"}],
+                                  value=[], className="hist-sel")),
+            html.Td(f"#{r['id']}"), html.Td(r["at"]), html.Td(r["title"]),
+            html.Td(f"{r['symbol']} {r['timeframe']}"), html.Td(r["range"]),
+            html.Td(q["trades"]), html.Td(f"{q['win_rate']:.0f}"), html.Td(f"{q['pf']:.2f}"),
+            html.Td(_fmt_money(q["net"]), className=("pos" if q["net"] > 0 else "neg")),
+            html.Td(f"{q['max_dd_pct']:.1f}"),
+            html.Td(params, className="params", title=params),
+            html.Td([html.Button("טען", id={"type": "hist-load", "index": r["id"]}, n_clicks=0, className="cat-btn"),
+                     " ",
+                     html.Button("✕", id={"type": "hist-del", "index": r["id"]}, n_clicks=0, className="cat-btn",
+                                 title="מחיקה מההיסטוריה")]),
+        ]))
+    return [
+        html.Div(className="pane-head", children=[
+            html.Div("היסטוריית ריצות", className="pane-title"),
+            html.Div("סמן עד 3 ריצות בעמודה \"השווה\" כדי לראות אותן זו לצד זו. \"טען\" מחזיר את הקוד והפרמטרים לעורך.",
+                     className="pane-sub"),
+        ]),
+        html.Div(html.Table(className="hist-table", children=[html.Thead(header), html.Tbody(rows)]),
+                 className="opt-table-wrap"),
+    ]
+
+
+@callback(
+    Output("history-list", "children"),
+    Input("panel-tabs", "value"), Input("key-stats", "children"),
+    Input({"type": "hist-del", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def refresh_history(tab, _stats, del_clicks):
+    trig = callback_context.triggered_id
+    if isinstance(trig, dict) and trig.get("type") == "hist-del":
+        if any(n for n in del_clicks if n):
+            lab.delete_run(trig.get("index"))
+        return _history_list_children()
+    if tab != "history" and trig == "panel-tabs":
+        return no_update
+    return _history_list_children()
+
+
+@callback(
+    Output("history-compare", "children"),
+    Input({"type": "hist-sel", "index": ALL}, "value"),
+    State({"type": "hist-sel", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def compare_runs(values, ids):
+    chosen = [i["index"] for v, i in zip(values, ids) if v]
+    recs = [lab.get_run(rid) for rid in chosen[:3]]
+    recs = [r for r in recs if r]
+    if not recs:
+        return ""
+    metrics = [("רווח נקי", lambda r: _fmt_money(r["q"]["net"]), lambda r: r["q"]["net"]),
+               ("תשואה %", lambda r: f"{r['q']['ret_pct']:.1f}%", lambda r: r["q"]["ret_pct"]),
+               ("קנה והחזק %", lambda r: f"{r['bh']:.1f}%", None),
+               ("עסקאות", lambda r: str(r["q"]["trades"]), None),
+               ("זכייה %", lambda r: f"{r['q']['win_rate']:.0f}%", None),
+               ("Profit Factor", lambda r: f"{r['q']['pf']:.2f}", None),
+               ("Drawdown מקסימלי", lambda r: f"{r['q']['max_dd_pct']:.1f}%", None),
+               ("רווח ממוצע לעסקה", lambda r: _fmt_money(r["q"]["avg_trade"]), lambda r: r["q"]["avg_trade"])]
+    cols = []
+    for r in recs:
+        rows = [html.Div(className="cmp-row", children=[
+            html.Span(label), html.Span(fmt(r), className=("" if sign is None else ("pos" if sign(r) > 0 else "neg")))])
+            for label, fmt, sign in metrics]
+        cols.append(html.Div(className="cmp-col", children=[
+            html.Div(f"#{r['id']} {r['title']}", className="cmp-title"),
+            html.Div(f"{r['symbol']} {r['timeframe']} · {r['range']} · {r['at']}", className="cat-result-when"),
+        ] + rows))
+    fig = lab.compare_figure(recs)
+    has_curves = any(r.get("trades") is not None for r in recs)
+    return [html.Div(className="cmp-grid", children=cols),
+            dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "280px"}) if has_curves
+            else html.Div("עקומת ההון נשמרת רק ל-12 הריצות האחרונות.", className="settings-hint")]
+
+
+@callback(
+    Output("code-input", "value", allow_duplicate=True),
+    Output("panel-tabs", "value", allow_duplicate=True),
+    Input({"type": "hist-load", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def load_from_history(n_clicks_list):
+    trig = callback_context.triggered_id
+    if not isinstance(trig, dict) or not any(n for n in n_clicks_list if n):
+        return no_update, no_update
+    rec = lab.get_run(trig.get("index"))
+    if not rec:
+        return no_update, no_update
+    return lab.run_code(rec), "tester"
+
+
+@callback(Output("tester-error", "children"), Output("tester-error", "hidden"),
+          Input("run-error", "children"), prevent_initial_call=True)
+def mirror_run_error(text):
+    text = (text or "").strip()
+    return (f"⚠ {text}", False) if text else ("", True)
+
+
+@callback(
+    Output("wf-results", "children"),
+    Input("wf-run-btn", "n_clicks"),
+    State("code-input", "value"), State("symbol-input", "value"), State("tf-store", "data"),
+    State("account-value-input", "value"), State("contracts-input", "value"),
+    State("multiplier-input", "value"), State("slippage-input", "value"),
+    State("settings-commission-input", "value"), State("order-type-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"),
+    State({"type": "strategy-input", "name": ALL}, "id"),
+    State("opt-p1", "value"), State("opt-p1-min", "value"), State("opt-p1-max", "value"), State("opt-p1-step", "value"),
+    State("opt-p2", "value"), State("opt-p2-min", "value"), State("opt-p2-max", "value"), State("opt-p2-step", "value"),
+    State("bt-range", "value"), State("wf-windows", "value"), State("wf-rank", "value"),
+    prevent_initial_call=True,
+)
+def run_walk_forward(n_clicks, code, symbol, timeframe, account_value, contracts, multiplier, slippage_ticks,
+                     commission, order_type, in_vals, in_ids, p1, p1_lo, p1_hi, p1_st, p2, p2_lo, p2_hi, p2_st,
+                     bt_range, n_windows, rank_by):
+    if not n_clicks:
+        return no_update
+    symbol = (symbol or "").strip().upper()
+    key = lab.engine_key_for_code(code)
+    grid = {}
+    if p1:
+        vals = lab.value_grid(p1_lo, p1_hi, p1_st)
+        if vals:
+            grid[p1] = vals
+    if p2 and p2 != p1:
+        vals = lab.value_grid(p2_lo, p2_hi, p2_st)
+        if vals:
+            grid[p2] = vals
+    if not grid:
+        return html.Div("הגדר לפחות פרמטר אחד עם טווח וצעד תקינים (למעלה, באופטימיזציה).", className="run-error")
+    df = load_full_history(symbol, timeframe, extended_hours=True)
+    if df is None:
+        df = _FRAMES.get((symbol, timeframe))
+    if df is None:
+        return html.Div("טען נתונים קודם.", className="run-error")
+    df, range_label = lab.slice_range(df, "all" if bt_range == "chart" else bt_range, None)
+    overrides = lab.code_overrides(code)
+    overrides.update({id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+                      for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")})
+    common = dict(cash=float(account_value or 100_000), size=float(contracts or 1),
+                  multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
+                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"),
+                  exit_slippage_ticks=float(_RESULTS.get("exit_slip", 3)), fill_mode=_RESULTS.get("fill_mode", "realistic"))
+    wf = lab.walk_forward(key, df, common, overrides, grid, n_windows=int(n_windows or 5), rank_by=rank_by or "net")
+    _RESULTS["wf"] = [{"train_from": w["train_from"], "train_to": w["train_to"], "test_from": w["test_from"], "test_to": w["test_to"]}
+                      for w in wf["windows"]]
+    return results.walk_forward_view(wf, symbol, timeframe, range_label)
+
+
+# ---------------------------------------------------------------- מסחר בנייר
+@callback(
+    Output("paper-msg", "children"),
+    Input("paper-start-btn", "n_clicks"),
+    State("code-input", "value"), State("symbol-input", "value"), State("tf-store", "data"),
+    State("account-value-input", "value"), State("contracts-input", "value"),
+    State("multiplier-input", "value"), State("slippage-input", "value"),
+    State("settings-commission-input", "value"), State("order-type-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"),
+    State({"type": "strategy-input", "name": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def paper_start(n, code, symbol, timeframe, account_value, contracts, multiplier, slippage_ticks, commission,
+                order_type, in_vals, in_ids):
+    if not n:
+        return no_update
+    key = lab.engine_key_for_code(code)
+    params = lab.code_overrides(code)
+    params.update({id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+                   for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")})
+    common = dict(cash=float(account_value or 100_000), size=float(contracts or 1),
+                  multiplier=float(multiplier or 1), slippage_ticks=float(slippage_ticks or 0),
+                  commission_per_contract=float(commission or 0), market_order=(order_type != "Limit"),
+                  exit_slippage_ticks=float(_RESULTS.get("exit_slip", 3)), fill_mode=_RESULTS.get("fill_mode", "realistic"))
+    s = paper.start_session(key=key, symbol=symbol, timeframe=timeframe, params=params, common=common)
+    return f"סשן #{s['id']} נפתח ({s['title']} · {s['symbol']} {s['timeframe']}). הבדיקה הראשונה תוך כמה שניות."
+
+
+@callback(
+    Output("paper-body", "children"),
+    Input("paper-interval", "n_intervals"), Input("panel-tabs", "value"), Input("paper-msg", "children"),
+    Input({"type": "paper-stop", "index": ALL}, "n_clicks"), Input({"type": "paper-del", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def paper_refresh(_n, tab, _msg, stop_clicks, del_clicks):
+    trig = callback_context.triggered_id
+    if isinstance(trig, dict):
+        if trig.get("type") == "paper-stop" and any(c for c in stop_clicks if c):
+            paper.stop_session(int(trig["index"]))
+        elif trig.get("type") == "paper-del" and any(c for c in del_clicks if c):
+            paper.delete_session(int(trig["index"]))
+    elif tab != "paper":
+        return no_update
+    return _paper_body()
+
+
+def _paper_body():
+    sessions = paper.list_sessions()
+    if not sessions:
+        return html.Div(className="empty-state", children=[
+            html.Div("אין סשנים עדיין", className="empty-title"),
+            html.Div("בחר אסטרטגיה, ודא ש-IB Gateway מחובר, ולחץ \"התחל סשן בנייר\".", className="empty-sub")])
+    cards = []
+    for s in sessions:
+        q = paper.session_summary(s)
+        running = s["status"] == "running"
+        ib = s.get("ib")
+        badge = html.Span("פעיל" if running else "נעצר", className=("badge on" if running else "badge off"))
+        ibtxt = "IB מחובר" if ib else ("IB לא זמין" if ib is False else "ממתין לבדיקה ראשונה")
+        meta = (f"נפתח {s['started_at']} · בדיקה אחרונה {s.get('last_check') or '—'} · {ibtxt} · "
+                f"{s.get('bars', 0):,} נרות · נר סגור אחרון {str(s.get('last_bar') or '—')[:16]}"
+                + (f" · מחיר {s.get('last_price'):,.2f}" if s.get("last_price") else ""))
+        kpis = html.Div(className="paper-kpis", children=[
+            html.Div([html.Span(results.money(q["net"]), className=f"v {results._cls(q['net'])}"), html.Span("רווח ממומש", className="k")]),
+            html.Div([html.Span(results.money(q["unrealized"]), className=f"v {results._cls(q['unrealized'])}"), html.Span("לא ממומש", className="k")]),
+            html.Div([html.Span(str(q["closed"]), className="v"), html.Span("עסקאות סגורות", className="k")]),
+            html.Div([html.Span(str(q["open"]), className="v"), html.Span("פוזיציות פתוחות", className="k")]),
+            html.Div([html.Span(f"{q['win_rate']:.0f}%", className="v"), html.Span("אחוז זכייה", className="k")]),
+            html.Div([html.Span((f"{q['fill_gap_pts']:+.2f} נק'" if q.get("fill_gap_pts") is not None else "—"), className="v",
+                               title="חיובי = המילוי שהבקטסט מניח גרוע מהמחיר שנראה בזיהוי (סליפג' אפקטיבי)"),
+                      html.Span(f"פער מילוי ({q.get('fill_gap_n', 0)})", className="k")]),
+        ])
+        rows = []
+        for t in sorted(s["trades"], key=lambda x: -x["id"])[:25]:
+            is_open = t["status"] == "open"
+            pnl = t["unrealized"] if is_open else t["pnl"]
+            rows.append(html.Tr([
+                html.Td(f"#{t['id']}", className="muted"),
+                html.Td("לונג" if t["side"] == "long" else "שורט", className=("pos" if t["side"] == "long" else "neg")),
+                html.Td(pd.Timestamp(t["entry_time"]).strftime("%d/%m %H:%M")), html.Td(f"{t['entry_price']:,.2f}"),
+                html.Td(pd.Timestamp(t["exit_time"]).strftime("%d/%m %H:%M") if t["exit_time"] else "—"),
+                html.Td(f"{t['exit_price']:,.2f}" if t["exit_price"] else "—"),
+                html.Td(("פתוחה" if is_open else "סגורה"), className=("badge on" if is_open else "muted")),
+                html.Td(results.money(pnl), className=results._cls(pnl)),
+            ]))
+        table = html.Div(html.Table(className="trades-table", children=[
+            html.Thead(html.Tr([html.Th("#"), html.Th("כיוון"), html.Th("כניסה"), html.Th("מחיר"), html.Th("יציאה"), html.Th("מחיר"), html.Th("מצב"), html.Th("רווח/הפסד")])),
+            html.Tbody(rows)]), className="table-wrap") if rows else html.Div("עדיין אין עסקאות בסשן הזה.", className="settings-hint")
+        log = html.Div(className="paper-log", children=[html.Div(line) for line in (s.get("log") or [])[-10:][::-1]])
+        err = html.Div(f"⚠ {s['error']}", className="tester-error") if s.get("error") else None
+        params = " · ".join(f"{lab.param_en(k)}: {lab.fmt_value(v)}" for k, v in s["params"].items())
+        cards.append(html.Div(className="paper-card", children=[
+            html.Div(className="paper-head", children=[
+                html.Div([html.Span(f"#{s['id']} {s['title']}", className="cat-title"), html.Span(f" · {s['symbol']} {s['timeframe']}", className="muted"), badge]),
+                html.Div(className="cat-actions", children=[
+                    html.Button("עצור", id={"type": "paper-stop", "index": s["id"]}, n_clicks=0, className="cat-btn", disabled=not running),
+                    html.Button("מחק", id={"type": "paper-del", "index": s["id"]}, n_clicks=0, className="cat-btn"),
+                ]),
+            ]),
+            html.Div(meta, className="cat-result-when"),
+            html.Div(params, className="cat-result-when", title=params),
+            err, kpis, table,
+            html.Div("יומן", className="paper-log-title"), log,
+        ]))
+    return html.Div(cards)
+
+
+@callback(
+    Output("code-input", "value", allow_duplicate=True),
+    Output("panel-tabs", "value", allow_duplicate=True),
+    Output("version-select", "value", allow_duplicate=True),
+    Input("strategy-select", "value"), State("code-input", "value"),
+    prevent_initial_call=True,
+)
+def strategy_selected(key, code):
+    """בחירה בבורר בראש הפאנל טוענת את האסטרטגיה מיד. אם הקוד כבר של אותה
+    אסטרטגיה (הבורר סונכרן מהקוד) - לא נוגעים, כדי לא לדרוס פרמטרים שנערכו."""
+    if not key or key not in lab.ENGINES or lab.engine_key_for_code(code) == key:
+        return no_update, no_update, no_update
+    return lab.ENGINES[key]["code"], "tester", None
+
+
+@callback(Output("lab-head-result", "children"), Output("strategy-select", "options"),
+          Input("key-stats", "children"), Input("code-input", "value"), prevent_initial_call=True)
+def refresh_lab_head(_stats, code):
+    by = _RESULTS.get("by_engine", {})
+    opts = []
+    for key, eng in lab.ENGINES.items():
+        last = by.get(key)
+        tag = f"  ·  {_fmt_money(last['stats']['net'])}" if last else ""
+        opts.append({"label": "\u200f" + eng["title"] + tag, "value": key})
+    key = lab.engine_key_for_code(code)
+    last = by.get(key)
+    if not last:
+        return "עדיין לא הורץ", opts
+    st = last["stats"]
+    return html.Span([html.Span(_fmt_money(st["net"]), className=("pos" if st["net"] > 0 else "neg")),
+                      html.Span(f" · {st['trades']} עסקאות · PF {st['pf']:.2f}", className="muted")]), opts
+
+
+# ---------------------------------------------------------------- כלי הגרף (assets/chart_tools.js)
+def _ep(ts) -> int:
+    from .data import _epoch as _e
+    return int(_e(pd.Timestamp(ts)))
+
+
+def _last_for(symbol: str, timeframe: str):
+    saved = _RESULTS.get("last")
+    if not saved:
+        return None
+    stats, cash, saved_symbol, saved_timeframe = saved
+    if symbol != saved_symbol or timeframe != saved_timeframe:
+        return None
+    return stats, cash
+
+
+@app.server.route("/api/trades")
+def api_trades():
+    """העסקאות שחופפות לטווח הנראה, עם סטופ/יעד וגיאומטריה - לציור על הגרף."""
+    args = flask.request.args
+    symbol = (args.get("symbol") or "").strip().upper(); timeframe = args.get("timeframe") or ""
+    seq = args.get("seq")
+    out = {"seq": seq, "trades": [], "total": 0}
+    run_id = args.get("run")
+    if run_id:
+        rec = lab.get_run(int(run_id))
+        if not rec or rec.get("trades") is None or rec["symbol"] != symbol or rec["timeframe"] != timeframe:
+            return flask.jsonify(out)
+        tr = rec["trades"].copy(); tr["ReturnPct"] = 0.0
+    else:
+        last = _last_for(symbol, timeframe)
+        if not last:
+            return flask.jsonify(out)
+        stats, _cash = last
+        tr = stats["_trades"]
+    if tr.empty:
+        return flask.jsonify(out)
+    try:
+        from_ts = from_display_epoch(int(args.get("from"))); to_ts = from_display_epoch(int(args.get("to")))
+    except (TypeError, ValueError):
+        return flask.jsonify(out)
+    tr = tr.sort_values("EntryTime").reset_index(drop=True)
+    tr["_i"] = np.arange(len(tr))
+    view = tr[(tr["EntryTime"] <= to_ts) & (tr["ExitTime"] >= from_ts)]
+    out["total"] = int(len(view))
+    if len(view) > 400:
+        view = view.iloc[_evenly_sampled_indices(len(view), 400)]
+    rows = []
+    has_sl = "SL" in view.columns; has_tp = "TP" in view.columns; has_ex = "Extra" in view.columns
+    for _, r in view.iterrows():
+        d = {"i": int(r["_i"]), "et": _ep(r["EntryTime"]), "xt": _ep(r["ExitTime"]),
+             "ep": float(r["EntryPrice"]), "xp": float(r["ExitPrice"]), "side": "long" if r["Size"] > 0 else "short",
+             "pnl": float(r["PnL"]), "ret": float(r["ReturnPct"]) * 100,
+             "dur": float((pd.Timestamp(r["ExitTime"]) - pd.Timestamp(r["EntryTime"])).total_seconds() / 60)}
+        if has_sl and np.isfinite(r["SL"]): d["sl"] = float(r["SL"])
+        if has_tp and np.isfinite(r["TP"]): d["tp"] = float(r["TP"])
+        if has_ex and isinstance(r["Extra"], list):
+            geo = []
+            for g in r["Extra"]:
+                g2 = dict(g)
+                for k in ("x1", "x2"):
+                    if k in g2: g2[k] = _ep(g2[k])
+                geo.append(g2)
+            d["extra"] = geo
+        rows.append(d)
+    out["trades"] = rows
+    return flask.jsonify(out)
+
+
+@app.server.route("/api/trade_index")
+def api_trade_index():
+    """כל העסקאות בתמצית (זמן כניסה, רווח) לניווט קודם/הבא."""
+    args = flask.request.args
+    symbol = (args.get("symbol") or "").strip().upper(); timeframe = args.get("timeframe") or ""
+    last = _last_for(symbol, timeframe)
+    if not last:
+        return flask.jsonify({"index": []})
+    tr = last[0]["_trades"].sort_values("EntryTime")
+    if tr.empty:
+        return flask.jsonify({"index": []})
+    et = to_display_naive(pd.DatetimeIndex(tr["EntryTime"])).astype("datetime64[s]").astype("int64").to_numpy()
+    w = (tr["PnL"].to_numpy() > 0).astype(int)
+    return flask.jsonify({"index": [[int(a), int(b)] for a, b in zip(et, w)]})
+
+
+@app.server.route("/api/context")
+def api_context():
+    """הקשר לציור: טווח הבדיקה, חלונות Walk-forward, עקומת הון דגומה, ועסקאות נייר חיות."""
+    args = flask.request.args
+    symbol = (args.get("symbol") or "").strip().upper(); timeframe = args.get("timeframe") or ""
+    out = {"tested": None, "wf": [], "equity": [], "paper": {"trades": [], "open": []}}
+    last = _last_for(symbol, timeframe)
+    if last:
+        stats, _cash = last
+        rng = _RESULTS.get("last_range")
+        if rng:
+            out["tested"] = {"from": _ep(rng[0]), "to": _ep(rng[1])}
+        out["wf"] = [{k: _ep(pd.Timestamp(v)) for k, v in w.items()} for w in _RESULTS.get("wf", [])]
+        tr = stats["_trades"]
+        if not tr.empty:
+            o = tr.sort_values("ExitTime")
+            xt = to_display_naive(pd.DatetimeIndex(o["ExitTime"])).astype("datetime64[s]").astype("int64").to_numpy()
+            cum = np.cumsum(o["PnL"].to_numpy(dtype=float))
+            idx = _evenly_sampled_indices(len(cum), 3000)
+            out["equity"] = [[int(xt[i]), float(round(cum[i], 2))] for i in idx]
+    for sess in paper.list_sessions():
+        if sess["symbol"] != symbol or sess["timeframe"] != timeframe or sess["status"] != "running":
+            continue
+        for t in sess["trades"]:
+            d = {"side": t["side"], "et": _ep(t["entry_time"]), "ep": t["entry_price"], "id": t["id"], "session": sess["id"]}
+            if t["status"] == "closed":
+                d.update({"xt": _ep(t["exit_time"]), "xp": t["exit_price"], "pnl": t["pnl"]})
+                out["paper"]["trades"].append(d)
+            else:
+                d.update({"unrealized": t.get("unrealized", 0.0)})
+                out["paper"]["open"].append(d)
+    return flask.jsonify(out)
+
+
+# ---------------------------------------------------------------- סינון ומיון עסקאות
+@callback(Output("trade-filters", "style"), Input("result-tabs", "value"))
+def show_trade_filters(tab):
+    return {"display": "flex"} if tab == "trades" else {"display": "none"}
+
+
+@callback(
+    Output("result-body", "children", allow_duplicate=True),
+    Output("trades-page", "data", allow_duplicate=True),
+    Output("trades-pagination", "style", allow_duplicate=True),
+    Output("trades-page-info", "children", allow_duplicate=True),
+    Input("tr-sort", "value"), Input("tr-side", "value"), Input("tr-result", "value"), Input("tr-min", "value"),
+    State("result-tabs", "value"),
+    prevent_initial_call=True,
+)
+def apply_trade_filters(sort, side, result, min_abs, tab):
+    _RESULTS["trade_filter"] = {"sort": sort, "side": side, "result": result, "min_abs": min_abs or 0}
+    saved = _RESULTS.get("last")
+    if tab != "trades" or not saved:
+        return no_update, no_update, no_update, no_update
+    stats, cash, _s, _t = saved
+    count = results.filtered_count(stats, _RESULTS["trade_filter"])
+    style, info = _trades_pagination_state("trades", count, 0)
+    return results.trades_table(stats, page=0, page_size=TRADES_PAGE_SIZE, flt=_RESULTS["trade_filter"]), 0, style, info
+
+
+# ---------------------------------------------------------------- גרסאות שמורות (אסטרטגיה + הערכים שהוזנו, בשם שנבחר)
+def _user_versions() -> list[dict]:
+    with _STRATEGIES_LOCK:
+        return [s for s in _load_strategies() if s.get("name") not in _BUILTIN_STRATEGY_NAMES]
+
+
+def _version_options():
+    opts = []
+    for v in _user_versions():
+        key = lab.engine_key_for_code(v.get("code", ""))
+        opts.append({"label": "\u200f" + v["name"] + "  ·  " + lab.ENGINES[key]["title"], "value": v["name"]})
+    return opts
+
+
+@callback(Output("version-select", "options"), Input("panel-tabs", "value"))
+def init_version_options(_tab):
+    return _version_options()
+
+
+@callback(
+    Output("version-select", "options", allow_duplicate=True), Output("ver-msg", "children"),
+    Output("version-select", "value", allow_duplicate=True), Output("ver-name", "value"),
+    Input("ver-save-btn", "n_clicks"), Input("ver-del-btn", "n_clicks"),
+    State("ver-name", "value"), State("code-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"), State({"type": "strategy-input", "name": ALL}, "id"),
+    State("account-value-input", "value"), State("contracts-input", "value"), State("multiplier-input", "value"),
+    State("slippage-input", "value"), State("settings-commission-input", "value"), State("version-select", "value"),
+    prevent_initial_call=True,
+)
+def save_or_delete_version(n_save, n_del, name, code, in_vals, in_ids, capital, contracts, multiplier, slippage, commission, selected):
+    trig = callback_context.triggered_id
+    if trig == "ver-del-btn":
+        if not n_del or not selected:
+            return no_update, no_update, no_update, no_update
+        with _STRATEGIES_LOCK:
+            rest = [s for s in _load_strategies() if s.get("name") != selected and s.get("name") not in _BUILTIN_STRATEGY_NAMES]
+            _save_strategies(rest)
+        return _version_options(), f"הגרסה \"{selected}\" נמחקה.", None, no_update
+    if not n_save:
+        return no_update, no_update, no_update, no_update
+    name = (name or "").strip()
+    overrides = {id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+                 for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")}
+    saved_code = lab.apply_inputs_to_code(code or "", overrides)
+    if not name:   # בלי שם: שם אוטומטי מהאסטרטגיה והשעה, אפשר לשנות אחר כך
+        name = f"{lab.ENGINES[lab.engine_key_for_code(saved_code)]['title']} · {pd.Timestamp.now():%d/%m %H:%M}"
+    entry = {"name": name, "code": saved_code,
+             "settings": {"capital": capital, "contracts": contracts, "multiplier": multiplier, "slippage": slippage, "commission": commission}}
+    with _STRATEGIES_LOCK:
+        rest = [s for s in _load_strategies() if s.get("name") != name and s.get("name") not in _BUILTIN_STRATEGY_NAMES]
+        rest.append(entry); rest.sort(key=lambda x: (x.get("name") or "").lower())
+        _save_strategies(rest)
+    # לא בוחרים את הגרסה בתפריט אחרי השמירה: כך בחירה שלה אחר כך תמיד נחשבת שינוי וטוענת אותה
+    return _version_options(), f"נשמר: \"{name}\" ({lab.ENGINES[lab.engine_key_for_code(saved_code)]['title']}).", None, ""
+
+
+@callback(
+    Output("code-input", "value", allow_duplicate=True),
+    Output("panel-tabs", "value", allow_duplicate=True),
+    Output("account-value-input", "value"), Output("contracts-input", "value"), Output("multiplier-input", "value"),
+    Output("slippage-input", "value"), Output("settings-commission-input", "value"),
+    Output("ver-del-btn", "style"),
+    Input("version-select", "value"),
+    prevent_initial_call=True,
+)
+def load_version(name):
+    if not name:
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update, {"display": "none"}
+    v = next((x for x in _user_versions() if x.get("name") == name), None)
+    if not v:
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update, {"display": "none"}
+    st = v.get("settings") or {}
+    g = lambda k: (st[k] if st.get(k) is not None else no_update)
+    return v.get("code", ""), "tester", g("capital"), g("contracts"), g("multiplier"), g("slippage"), g("commission"), {"display": "inline-block"}
+
+
+@callback(Output("fill-mode-input", "className"), Input("exit-slippage-input", "value"), Input("fill-mode-input", "value"))
+def remember_fill_settings(exit_slip, mode):
+    _RESULTS["exit_slip"] = float(exit_slip or 0)
+    _RESULTS["fill_mode"] = mode or "realistic"
+    return "settings-dropdown"
+
+
+@callback(Output("audit-body", "children"), Input("audit-run-btn", "n_clicks"), State("symbol-input", "value"), prevent_initial_call=True)
+def run_audit(n, symbol):
+    if not n:
+        return no_update
+    return audit.audit_view(audit.audit_cache((symbol or "MNQ").strip().upper()))
+
+
+@callback(
+    Output("sens-results", "children"),
+    Input("sens-run-btn", "n_clicks"),
+    State("code-input", "value"), State("symbol-input", "value"), State("tf-store", "data"),
+    State("account-value-input", "value"), State("contracts-input", "value"), State("multiplier-input", "value"),
+    State("order-type-input", "value"),
+    State({"type": "strategy-input", "name": ALL}, "value"), State({"type": "strategy-input", "name": ALL}, "id"),
+    State("bt-range", "value"),
+    prevent_initial_call=True,
+)
+def run_cost_sensitivity(n, code, symbol, timeframe, account_value, contracts, multiplier, order_type, in_vals, in_ids, bt_range):
+    if not n:
+        return no_update
+    symbol = (symbol or "").strip().upper()
+    key = lab.engine_key_for_code(code)
+    df = load_full_history(symbol, timeframe, extended_hours=True)
+    if df is None:
+        df = _FRAMES.get((symbol, timeframe))
+    if df is None:
+        return html.Div("טען נתונים קודם.", className="run-error")
+    df, range_label = lab.slice_range(df, "all" if bt_range == "chart" else bt_range, None)
+    overrides = lab.code_overrides(code)
+    overrides.update({id_dict.get("name"): (bool(val) if isinstance(val, list) else val)
+                      for val, id_dict in zip(in_vals, in_ids) if isinstance(id_dict, dict) and id_dict.get("name")})
+    common = dict(cash=float(account_value or 100_000), size=float(contracts or 1), multiplier=float(multiplier or 1),
+                  market_order=(order_type != "Limit"))
+    return results.cost_sensitivity_view(lab.cost_sensitivity(key, df, common, overrides), symbol, timeframe, range_label)
 
 
 from .data import _epoch  # noqa: E402  (מיובא כאן כדי להימנע מייבוא מעגלי בזמן טעינה)
@@ -1250,7 +2194,7 @@ app.clientside_callback(
             return [window.dash_clientside.no_update, window.dash_clientside.no_update,
                     window.dash_clientside.no_update];
         }
-        return ["tester", true, "Running..."];
+        return ["tester", true, "מריץ..."];
     }
     """,
     Output("panel-tabs", "value", allow_duplicate=True),
@@ -1266,7 +2210,7 @@ app.clientside_callback(
 app.clientside_callback(
     """
     function(_children) {
-        return [false, "\\u25b6  Add to chart"];
+        return [false, "\\u25b6  הרץ"];
     }
     """,
     Output("run-btn", "disabled", allow_duplicate=True),
