@@ -46,10 +46,10 @@ ENGINES: dict[str, dict] = {
     },
     "hammer_rsi": {
         "title": "נר פטיש + RSI",
-        "desc": "היפוך: נר פטיש (או פטיש הפוך) אחרי RSI קיצוני. סטופ ויעד קבועים "
+        "desc": "היפוך: נר פטיש (או פטיש הפוך), עם פילטר RSI קיצוני שאפשר לכבות. סטופ ויעד קבועים "
                 "בנקודות. לונג ושורט.",
         "code": S.HAMMER_RSI_CODE,
-        "params": [("RSI_PERIOD", "rsi_period", _I, 14), ("RSI_OVERSOLD", "rsi_oversold", _F, 30.0),
+        "params": [("USE_RSI", "use_rsi", _B, True), ("RSI_PERIOD", "rsi_period", _I, 14), ("RSI_OVERSOLD", "rsi_oversold", _F, 30.0),
                    ("RSI_OVERBOUGHT", "rsi_overbought", _F, 70.0), ("HAMMER_RATIO", "hammer_ratio", _F, 2.0),
                    ("STOP_LOSS_PTS", "stop_loss_pts", _F, 50.0), ("TAKE_PROFIT_PTS", "take_profit_pts", _F, 100.0)],
         "runner": S.run_hammer_rsi_backtest,
@@ -422,7 +422,7 @@ def compare_figure(recs: list[dict]) -> go.Figure:
 LABELS: dict[str, tuple[str, str]] = {
     # שם ה-input -> (שם באנגלית כמקובל בפלטפורמות מסחר, הסבר בעברית)
     "SMA_PERIOD": ("SMA Length", "אורך הממוצע הנע"), "SMA_LENGTH": ("SMA Length", "אורך הממוצע הנע"),
-    "RSI_PERIOD": ("RSI Length", "אורך RSI"), "RSI_LEN": ("RSI Length", "אורך RSI"),
+    "USE_RSI": ("RSI Filter", "להפעיל פילטר RSI"), "RSI_PERIOD": ("RSI Length", "אורך RSI"), "RSI_LEN": ("RSI Length", "אורך RSI"),
     "RSI_OVERSOLD": ("RSI Oversold", "רמת מכירת יתר"), "RSI_OVERBOUGHT": ("RSI Overbought", "רמת קניית יתר"),
     "HAMMER_RATIO": ("Wick / Body Ratio", "יחס פתיל לגוף"),
     "STOP_LOSS_PTS": ("Stop Loss (pts)", "סטופ בנקודות"), "TAKE_PROFIT_PTS": ("Take Profit (pts)", "יעד בנקודות"),

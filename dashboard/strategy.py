@@ -39,6 +39,7 @@ RECOGNIZED_STRATEGY_INPUTS = {
     "RSI_OVERSOLD": "rsi_oversold",
     "RSI_OVERBOUGHT": "rsi_overbought",
     "HAMMER_RATIO": "hammer_ratio",
+    "USE_RSI": "use_rsi",
     "STOP_LOSS_PTS": "stop_loss_pts",
     "MAX_BODY_PTS": "max_body_pts",
     "MIN_STD_BEFORE": "min_std_before",
@@ -455,10 +456,11 @@ def detect_builtin_strategy(code: str) -> str | None:
 
 HAMMER_RSI_CODE = """\
 # strategy: hammer_rsi
-# Hammer / Inverted-Hammer reversal, filtered by RSI extremes.
-# Long:  RSI(previous bar) < RSI_OVERSOLD   AND current bar is a hammer.
-# Short: RSI(previous bar) > RSI_OVERBOUGHT AND current bar is an inverted hammer.
+# Hammer / Inverted-Hammer reversal, optionally filtered by RSI extremes.
+# Long:  current bar is a hammer          (AND RSI(prev bar) < RSI_OVERSOLD   if USE_RSI)
+# Short: current bar is an inverted hammer (AND RSI(prev bar) > RSI_OVERBOUGHT if USE_RSI)
 # Exit:  stop-loss or take-profit, whichever the bar's high/low touches first.
+USE_RSI = True         # input
 RSI_PERIOD = 14        # input
 RSI_OVERSOLD = 30      # input
 RSI_OVERBOUGHT = 70    # input
@@ -481,6 +483,7 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
                             hammer_ratio: float = 2.0,
                             stop_loss_pts: float = 50.0,
                             take_profit_pts: float = 100.0,
+                            use_rsi: bool = True,
                             exit_slippage_ticks: float | None = None, fill_mode: str = "realistic") -> dict:
     """היפוך-מגמה וקטורי (long *ו-*short, בניגוד ל-run_fast_sma_crossover_backtest
     שהוא long-only): נר פטיש/פטיש-הפוך מסונן ע"י קיצון RSI. יציאה בסטופ-לוס/
@@ -544,8 +547,13 @@ def run_hammer_rsi_backtest(df: pd.DataFrame, *, cash: float = 100_000.0,
         & (body_top <= low + (1.0 / 3.0) * rng)
     )
 
-    long_signal = is_hammer & (prev_rsi < rsi_oversold)
-    short_signal = is_inv_hammer & (prev_rsi > rsi_overbought)
+    # USE_RSI כבוי = פטיש טהור, בלי פילטר מומנטום (להשוואה ישירה מול מנועי הפטיש של איתי)
+    if use_rsi:
+        long_signal = is_hammer & (prev_rsi < rsi_oversold)
+        short_signal = is_inv_hammer & (prev_rsi > rsi_overbought)
+    else:
+        long_signal = is_hammer.copy()
+        short_signal = is_inv_hammer.copy()
 
     long_idx = np.flatnonzero(long_signal)
     short_idx = np.flatnonzero(short_signal)
