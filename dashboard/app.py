@@ -4,7 +4,8 @@
 דורש TWS/IB Gateway פתוח על 127.0.0.1:7497 עם API מופעל.
 
 הפריסה: הגרף תופס את מלוא הרוחב, ומתחתיו פאנל נפתח/נסגר עם שתי לשוניות —
-Strategy Tester (ביצועים, תשואה, עסקאות) ו-Pine Editor (כתיבת קוד האסטרטגיה).
+Strategy Tester (ביצועים, תשואה, עסקאות) ו-Settings (תת-לשונית Strategy: עורך
+הקוד/Pine Editor; תת-לשונית Account: הגדרות חשבון/ביצוע).
 """
 from __future__ import annotations
 
@@ -35,13 +36,21 @@ from .data import (
 )
 from .strategy import (
     DEFAULT_CODE,
-    HAMMER_RSI_CODE,
+    DOWN_STREAK_REVERSION_CODE,
+    HAMMER_SWING_EXIT_CODE,
+    OVERNIGHT_VAL_REVERSION_CODE,
     RECOGNIZED_STRATEGY_INPUTS,
+    SMA20_MEAN_REVERSION_CODE,
     StrategyCompileError,
+    compute_daily_overnight_value_areas,
     detect_builtin_strategy,
     parse_strategy_inputs,
+    run_down_streak_reversion_backtest,
     run_fast_sma_crossover_backtest,
-    run_hammer_rsi_backtest,
+    run_hammer_breakout_backtest,
+    run_hammer_swing_exit_backtest,
+    run_overnight_val_reversion_backtest,
+    run_sma20_mean_reversion_backtest,
     to_markers,
 )
 
@@ -113,7 +122,10 @@ _STRATEGIES_LOCK = threading.Lock()
 # והן ממשיכות להופיע גם על strategies.json ריק/חדש. שם מזהה זהה לשם שנשמר -
 # שמירה בשם הזה על ידי המשתמש פשוט "תדרוס חזותית" (לא לצמיתות) את המובנית.
 BUILTIN_STRATEGIES = [
-    {"name": "Hammer + RSI (built-in)", "code": HAMMER_RSI_CODE, "settings": {}},
+    {"name": "Hammer Swing Exit (built-in)", "code": HAMMER_SWING_EXIT_CODE, "settings": {}},
+    {"name": "SMA20 Mean Reversion (built-in)", "code": SMA20_MEAN_REVERSION_CODE, "settings": {}},
+    {"name": "Down-Streak Reversion (built-in)", "code": DOWN_STREAK_REVERSION_CODE, "settings": {}},
+    {"name": "Overnight VAL Reversion (built-in)", "code": OVERNIGHT_VAL_REVERSION_CODE, "settings": {}},
 ]
 _BUILTIN_STRATEGY_NAMES = {s["name"] for s in BUILTIN_STRATEGIES}
 
@@ -248,6 +260,7 @@ def build_layout() -> html.Div:
                              _indicator_row("vwap", "VWAP", []),
                              _indicator_row("rsi", "RSI", [("length", 14)]),
                              _indicator_row("bb", "Bollinger Bands", [("length", 20), ("std", 2)]),
+                             _indicator_row("overnightva", "Overnight VA Levels", []),
                          ]),
             ]),
             html.Div(className="sep"),
@@ -325,20 +338,9 @@ def build_layout() -> html.Div:
                              parent_className="panel-tabs-parent", children=[
                                  dcc.Tab(label="Strategy Tester", value="tester",
                                          className="ptab", selected_className="ptab-sel"),
-                                 dcc.Tab(label="Pine Editor", value="editor",
-                                         className="ptab", selected_className="ptab-sel"),
                                  dcc.Tab(label="Settings", value="settings",
                                          className="ptab", selected_className="ptab-sel"),
                              ]),
-                    # חץ ספריית האסטרטגיות, ליד לשונית "Pine Editor" - כמו ב-TradingView.
-                    # dcc.Tab לא מאפשר להטמיע רכיב בתוך כותרת הלשונית עצמה (label הוא
-                    # טקסט בלבד), אז זה אלמנט נפרד הממוקם ב-JS מעל הלשונית (ראו
-                    # assets/strategy_library.js: positionArrow) - חייב .panel-bar
-                    # עם position:relative בשביל זה (ראו style.css).
-                    html.Div("▾", id="strategy-lib-arrow", className="strategy-lib-arrow",
-                             title="Strategy library"),
-                    html.Div(id="strategy-lib-menu", className="strategy-lib-menu",
-                             style={"display": "none"}),
                     html.Button("⌄", id="panel-toggle", n_clicks=0, className="panel-toggle",
                                 title="פתח/סגור את הפאנל"),
                 ]),
@@ -383,7 +385,7 @@ def build_layout() -> html.Div:
                         ]),
                         dcc.Loading(html.Div(id="result-body", className="result-body",
                                  children=_html(panels.empty(
-                                     "פתח את Pine Editor, כתוב אסטרטגיה ולחץ "
+                                     "פתחו Settings ← Strategy, כתבו אסטרטגיה ולחצו "
                                      "\u25b6 Add to chart כדי לראות ביצועים."))),
                                     type="dot", color="#2962FF"),
                         # ניווט עמודים ל"List of Trades" - מוצג רק בלשונית trades וכשיש
@@ -398,68 +400,97 @@ def build_layout() -> html.Div:
                                                  className="trades-page-btn"),
                                  ]),
                     ]),
-                    html.Div(id="editor-pane", style={"display": "none"}, children=[
-                        html.Div(className="editor-row", children=[
-                            html.Div("כתוב def init(self) ו-def next(self). "
-                                     "זמינים: self.vwap (מתאפס כל יום), self.position_size, "
-                                     "sma / ema / rsi / crossover.", className="editor-hint"),
-                            html.Div(className="editor-controls", children=[
-                                html.Button("▶  Add to chart", id="run-btn", n_clicks=0,
-                                            className="run-btn",
-                                            title="בקטסט על כל ההיסטוריה"),
-                            ]),
-                        ]),
-                        dcc.Textarea(id="code-input", value=DEFAULT_CODE, className="code-area",
-                                     spellCheck=False),
-                        html.Div(id="run-error", className="run-error"),
-                    ]),
+                    # Settings: שתי תת-לשוניות - "Strategy" (עורך הקוד/Pine Editor, נפתחת
+                    # כברירת מחדל - value="strategy") ו-"Account" (הגדרות חשבון/ביצוע,
+                    # שהיו קודם כל תוכן לשונית Settings לבדה). switch_settings_subtab
+                    # למטה מטפל במעבר ביניהן, באותה מוסכמה בדיוק כמו switch_panel_tab.
                     html.Div(id="settings-pane", style={"display": "none"}, children=[
-                        html.Div(className="settings-hint",
-                                 children="הגדרות חשבון וביצוע — משפיעות על חישוב הבקטסט "
-                                          "(PnL, סליפג' ועמלות) בלחיצה הבאה על Add to chart."),
-                        html.Div(className="settings-grid", children=[
-                            html.Div(className="settings-field", children=[
-                                html.Span("Account Value", className="ctl-label"),
-                                dcc.Input(id="account-value-input", type="number", value=100000,
-                                          min=1000, className="num-input tiny", debounce=True),
-                            ]),
-                            html.Div(className="settings-field", children=[
-                                html.Span("Contracts per trade", className="ctl-label"),
-                                dcc.Input(id="contracts-input", type="number", value=1, min=1,
-                                          step=1, className="num-input tiny", debounce=True),
-                            ]),
-                            html.Div(className="settings-field", children=[
-                                html.Span("Contract multiplier", className="ctl-label"),
-                                dcc.Input(id="multiplier-input", type="number", value=2, min=0,
-                                          step=0.01, className="num-input tiny", debounce=True),
-                            ]),
-                            html.Div(className="settings-field", children=[
-                                html.Span("Slippage (ticks)", className="ctl-label"),
-                                dcc.Input(id="slippage-input", type="number", value=2, min=0,
-                                          step=1, className="num-input tiny", debounce=True),
-                            ]),
-                            html.Div(className="settings-field", children=[
-                                html.Span("Commission / contract", className="ctl-label"),
-                                dcc.Input(id="settings-commission-input", type="number", value=0,
-                                          min=0, step=0.01, className="num-input tiny", debounce=True),
-                            ]),
-                            html.Div(className="settings-field", children=[
-                                html.Span("Order type", className="ctl-label"),
-                                dcc.Dropdown(id="order-type-input", className="settings-dropdown",
-                                             options=[{"label": "Market", "value": "Market"},
-                                                      {"label": "Limit", "value": "Limit"}],
-                                             value="Market", clearable=False, searchable=False),
-                            ]),
+                        html.Div(className="settings-subtabs-bar", children=[
+                            dcc.Tabs(id="settings-subtabs", value="strategy",
+                                     className="settings-subtabs", children=[
+                                         dcc.Tab(label="Strategy", value="strategy",
+                                                 className="stab", selected_className="stab-sel"),
+                                         dcc.Tab(label="Account", value="account",
+                                                 className="stab", selected_className="stab-sel"),
+                                     ]),
                         ]),
-                        # "Strategy Inputs" - שדות שזוהו אוטומטית מ-"# input" בקוד ה-Pine
-                        # Editor (ראו strategy.parse_strategy_inputs/_strategy_inputs_section).
-                        # מתעדכן בכל שינוי בקוד (Input("code-input","value") למטה); הערכים
-                        # שהמשתמש עורך כאן נקראים ב-run_or_switch דרך pattern-matching
-                        # State ומשפיעים בפועל רק על שמות מוכרים (RECOGNIZED_STRATEGY_INPUTS) -
-                        # שאר השדות מוצגים לשקיפות בלבד, בלי אפקט על המנוע המהיר עדיין.
-                        html.Div(className="settings-section-title", children="Strategy Inputs"),
-                        html.Div(id="strategy-inputs-container",
-                                 children=_strategy_inputs_section(DEFAULT_CODE)),
+                        html.Div(id="settings-strategy-subpane", children=[
+                            html.Div(className="editor-row", children=[
+                                html.Div("כתוב def init(self) ו-def next(self). "
+                                         "זמינים: self.vwap (מתאפס כל יום), self.position_size, "
+                                         "sma / ema / rsi / crossover.", className="editor-hint"),
+                                html.Div(className="editor-controls", children=[
+                                    # ספריית האסטרטגיות (רשימת שמורות + Save/Delete) - כפתור
+                                    # רגיל בזרימה רגילה עם תפריט נפתח מתחתיו (position:relative
+                                    # על strategy-lib-wrap), לא אלמנט צף הממוקם ב-JS מעל
+                                    # כותרת-לשונית כמו קודם: עכשיו זה סתם תוכן בתוך תת-הלשונית
+                                    # "Strategy", לא צריך יותר את הטריק הזה.
+                                    html.Div(className="strategy-lib-wrap", children=[
+                                        html.Button([
+                                            html.Span("Strategy library", className="strategy-lib-btn-label"),
+                                            html.Span("▾", className="strategy-lib-caret"),
+                                        ], id="strategy-lib-arrow", className="strategy-lib-btn",
+                                            title="Strategy library"),
+                                        html.Div(id="strategy-lib-menu", className="strategy-lib-menu",
+                                                 style={"display": "none"}),
+                                    ]),
+                                    html.Button("▶  Add to chart", id="run-btn", n_clicks=0,
+                                                className="run-btn",
+                                                title="בקטסט על כל ההיסטוריה"),
+                                ]),
+                            ]),
+                            dcc.Textarea(id="code-input", value=DEFAULT_CODE, className="code-area",
+                                         spellCheck=False),
+                            html.Div(id="run-error", className="run-error"),
+                        ]),
+                        html.Div(id="settings-account-subpane", style={"display": "none"}, children=[
+                            html.Div(className="settings-hint",
+                                     children="הגדרות חשבון וביצוע — משפיעות על חישוב הבקטסט "
+                                              "(PnL, סליפג' ועמלות) בלחיצה הבאה על Add to chart."),
+                            html.Div(className="settings-grid", children=[
+                                html.Div(className="settings-field", children=[
+                                    html.Span("Account Value", className="ctl-label"),
+                                    dcc.Input(id="account-value-input", type="number", value=100000,
+                                              min=1000, className="num-input tiny", debounce=True),
+                                ]),
+                                html.Div(className="settings-field", children=[
+                                    html.Span("Contracts per trade", className="ctl-label"),
+                                    dcc.Input(id="contracts-input", type="number", value=1, min=1,
+                                              step=1, className="num-input tiny", debounce=True),
+                                ]),
+                                html.Div(className="settings-field", children=[
+                                    html.Span("Contract multiplier", className="ctl-label"),
+                                    dcc.Input(id="multiplier-input", type="number", value=2, min=0,
+                                              step=0.01, className="num-input tiny", debounce=True),
+                                ]),
+                                html.Div(className="settings-field", children=[
+                                    html.Span("Slippage (ticks)", className="ctl-label"),
+                                    dcc.Input(id="slippage-input", type="number", value=2, min=0,
+                                              step=1, className="num-input tiny", debounce=True),
+                                ]),
+                                html.Div(className="settings-field", children=[
+                                    html.Span("Commission / contract", className="ctl-label"),
+                                    dcc.Input(id="settings-commission-input", type="number", value=0,
+                                              min=0, step=0.01, className="num-input tiny", debounce=True),
+                                ]),
+                                html.Div(className="settings-field", children=[
+                                    html.Span("Order type", className="ctl-label"),
+                                    dcc.Dropdown(id="order-type-input", className="settings-dropdown",
+                                                 options=[{"label": "Market", "value": "Market"},
+                                                          {"label": "Limit", "value": "Limit"}],
+                                                 value="Market", clearable=False, searchable=False),
+                                ]),
+                            ]),
+                            # "Strategy Inputs" - שדות שזוהו אוטומטית מ-"# input" בקוד ה-Pine
+                            # Editor (ראו strategy.parse_strategy_inputs/_strategy_inputs_section).
+                            # מתעדכן בכל שינוי בקוד (Input("code-input","value") למטה); הערכים
+                            # שהמשתמש עורך כאן נקראים ב-run_or_switch דרך pattern-matching
+                            # State ומשפיעים בפועל רק על שמות מוכרים (RECOGNIZED_STRATEGY_INPUTS) -
+                            # שאר השדות מוצגים לשקיפות בלבד, בלי אפקט על המנוע המהיר עדיין.
+                            html.Div(className="settings-section-title", children="Strategy Inputs"),
+                            html.Div(id="strategy-inputs-container",
+                                     children=_strategy_inputs_section(DEFAULT_CODE)),
+                        ]),
                     ]),
                 ]),
             ]),
@@ -567,6 +598,7 @@ def push_live_update(_n, symbol, timeframe):
         payload["secondsToClose"] = live.seconds_to_close(timeframe)
     if bar:
         print(f"Sending live bar to chart: close={bar['close']}", flush=True)
+        print(f"Sending to chart: close={bar['close']}", flush=True)
     return payload
 
 
@@ -709,11 +741,59 @@ def api_markers():
                           "markers": markers, "note": note})
 
 
+@app.server.route("/api/overnight_levels")
+def api_overnight_levels():
+    """נתיב Flask ישיר (כמו /api/lod, /api/markers) לאינדיקטור-התצוגה "Overnight
+    VA Levels" (assets/indicators.js) - תצוגה בלבד, לא מריץ שום אסטרטגיה ולא
+    שולח שום הזמנה. ה-POC/VAH/VAL מחושבים ב-Python (strategy.py:
+    compute_daily_overnight_value_areas - פונקציה נפרדת, לא נוגעת
+    ב-run_overnight_val_reversion_backtest) ולא בצד-הלקוח, כי גבולות ה-RTH
+    (09:30/16:00 ET) הם מושג בשעון ניו-יורק, ואילו candle.time בגרף הוא
+    "UTC מזויף" של שעון ישראל (ראו data.py: DISPLAY_TZ) - שחזור נכון של
+    הגבולות האלה מתוך epoch-התצוגה ב-JS היה דורש להפוך שתי המרות-אזור-זמן
+    תלויות-שעון-קיץ נפרדות (ישראל ו-ארה"ב, עם תאריכי-מעבר שונים), בדיוק סוג
+    הבאג העדין שהפרויקט הזה נזהר ממנו לאורך כל המחקר שקדם לאינדיקטור הזה.
+    קורא תמיד להיסטוריית ה-1m המלאה (load_full_history) - בדיוק כמו
+    שהאסטרטגיה עצמה תמיד רצה על 1m מלא, בלי קשר לטיים-פריים המוצג בגרף.
+    """
+    args = flask.request.args
+    symbol = (args.get("symbol") or "").strip().upper()
+    empty = {"symbol": symbol, "levels": []}
+    if not symbol:
+        return flask.jsonify(empty)
+    try:
+        df = load_full_history(symbol, "1m", extended_hours=True)
+    except DataError:
+        return flask.jsonify(empty)
+    if df is None or df.empty:
+        return flask.jsonify(empty)
+
+    levels = compute_daily_overnight_value_areas(df)
+    if levels.empty:
+        return flask.jsonify(empty)
+
+    from .data import to_display_naive  # ייבוא מאוחר - אותה סיבה בדיוק כמו _epoch למטה
+    open_epoch = to_display_naive(pd.DatetimeIndex(levels["rth_open_time"])) \
+        .astype("datetime64[s]").astype("int64").to_numpy()
+    close_epoch = to_display_naive(pd.DatetimeIndex(levels["rth_close_time"])) \
+        .astype("datetime64[s]").astype("int64").to_numpy()
+
+    poc_arr = levels["poc"].to_numpy()
+    val_arr = levels["val"].to_numpy()
+    vah_arr = levels["vah"].to_numpy()
+    rows = [
+        {"poc": float(poc_arr[i]), "val": float(val_arr[i]), "vah": float(vah_arr[i]),
+         "rth_open_epoch": int(open_epoch[i]), "rth_close_epoch": int(close_epoch[i])}
+        for i in range(len(levels))
+    ]
+    return flask.jsonify({"symbol": symbol, "levels": rows})
+
+
 # ------------------------------------------------------ ספריית אסטרטגיות (Pine Editor)
 @app.server.route("/api/strategies")
 def api_strategies_list():
     """כל האסטרטגיות השמורות (שם/קוד/הגדרות) - assets/strategy_library.js קורא
-    לזה בכל פתיחה של התפריט ליד לשונית Pine Editor."""
+    לזה בכל פתיחה של תפריט "Strategy library" (Settings ← Strategy)."""
     with _STRATEGIES_LOCK:
         strategies = _load_strategies()
     return flask.jsonify({"strategies": strategies})
@@ -768,7 +848,6 @@ def toggle_panel(_n, is_open):
 
 @callback(
     Output("tester-pane", "style"),
-    Output("editor-pane", "style"),
     Output("settings-pane", "style"),
     Input("panel-tabs", "value"),
 )
@@ -776,8 +855,22 @@ def switch_panel_tab(tab):
     show, hide = {"display": "block"}, {"display": "none"}
     return (
         show if tab == "tester" else hide,
-        show if tab == "editor" else hide,
         show if tab == "settings" else hide,
+    )
+
+
+@callback(
+    Output("settings-strategy-subpane", "style"),
+    Output("settings-account-subpane", "style"),
+    Input("settings-subtabs", "value"),
+)
+def switch_settings_subtab(subtab):
+    """תת-הלשוניות של Settings - "Strategy" (עורך הקוד, ברירת המחדל) ו-"Account"
+    (הגדרות חשבון/ביצוע) - אותה מוסכמה בדיוק כמו switch_panel_tab למעלה."""
+    show, hide = {"display": "block"}, {"display": "none"}
+    return (
+        show if subtab != "account" else hide,
+        show if subtab == "account" else hide,
     )
 
 
@@ -786,10 +879,10 @@ def switch_panel_tab(tab):
     Input("code-input", "value"),
 )
 def update_strategy_inputs(code):
-    """מרענן את "Strategy Inputs" (לשונית Settings) בכל שינוי בקוד ה-Pine Editor -
-    ראו _strategy_inputs_section. שים לב: זה בונה את השדות מחדש מהערכים
-    שבטקסט הקוד עצמו, כך שעריכת ערך שדה ואז שינוי חלק *אחר* של הקוד תאפס אותו
-    שדה בחזרה לברירת המחדל שבטקסט - מגבלה מוכרת, לא נפתרה כאן."""
+    """מרענן את "Strategy Inputs" (לשונית Settings ← Account) בכל שינוי בקוד
+    ה-Pine Editor - ראו _strategy_inputs_section. שים לב: זה בונה את השדות
+    מחדש מהערכים שבטקסט הקוד עצמו, כך שעריכת ערך שדה ואז שינוי חלק *אחר* של
+    הקוד תאפס אותו שדה בחזרה לברירת המחדל שבטקסט - מגבלה מוכרת, לא נפתרה כאן."""
     return _strategy_inputs_section(code or "")
 
 
@@ -912,6 +1005,23 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
         if isinstance(id_dict, dict) and id_dict.get("name")
     }
 
+    # מגן מפני race condition בזמן החלפת אסטרטגיה מהתפריט: loadAndRun
+    # ב-strategy_library.js משנה כמה props בבת אחת (code-input, ואז מיד
+    # run-window-store) בלי לחכות שהשרת יספיק לעדכן את strategy-inputs-container
+    # לברירות-המחדל של האסטרטגיה *החדשה* קודם - אז ה-State כאן עלול לשקף
+    # עדיין את שדות-הקלט של האסטרטגיה ה*קודמת*. מזהים את זה בכך שקבוצת השמות
+    # שהתקבלה לא תואמת את מה ש-parse_strategy_inputs מפרש כרגע מתוך _code (שכן
+    # מתעדכן תמיד, כי code-input עצמו הוא ה-State שקרא ל-callback הזה בכלל) -
+    # אם לא תואם, ה-container בבירור עדיין לא התעדכן: מתעלמים מכל ה-overrides
+    # (שייכים לאסטרטגיה הקודמת) ומשתמשים בברירות-המחדל המובנות של המנוע עצמו,
+    # שתמיד נכונות לקוד הנוכחי.
+    current_input_names = {item["name"] for item in parse_strategy_inputs(_code)}
+    provided_names = {
+        id_dict.get("name") for id_dict in strategy_input_ids if isinstance(id_dict, dict)
+    }
+    if current_input_names != provided_names:
+        strategy_overrides = {}
+
     def _override(engine_param: str, default, caster=float):
         """קלט מוכר בודד: RECOGNIZED_STRATEGY_INPUTS ממפה כמה שמות-משתנה
         אפשריים לאותו engine_param (למשל SMA_LENGTH/SMA_PERIOD -> sma_period) -
@@ -959,15 +1069,51 @@ def run_or_switch(_window_data, result_tab, _prev_n, _next_n, period, custom_fro
             market_order=(order_type != "Limit"),
         )
         try:
-            if builtin_key == "hammer_rsi":
-                stats = run_hammer_rsi_backtest(
+            if builtin_key == "hammer_breakout":
+                # "hammer_breakout" נשאר כאן בכוונה (המנוע עצמו, run_hammer_breakout_backtest,
+                # לא הוסר מ-strategy.py) - האסטרטגיה השמורה "hamer std" משתמשת
+                # בסימון הזה בקוד שלה, אז חייבים לשמור על הענף הזה כדי שהיא
+                # תמשיך לעבוד, למרות שהערך המובנה "Hammer Breakout" הוסר
+                # מ-BUILTIN_STRATEGIES (התפריט) לפי בקשה מפורשת.
+                stats = run_hammer_breakout_backtest(
                     df_backtest, **common_kwargs,
-                    rsi_period=int(_override("rsi_period", 14)),
-                    rsi_oversold=_override("rsi_oversold", 30.0),
-                    rsi_overbought=_override("rsi_overbought", 70.0),
-                    hammer_ratio=_override("hammer_ratio", 2.0),
+                    stop_loss_pts=_override("stop_loss_pts", 20.0),
+                    max_body_pts=_override("max_body_pts", 7.0),
+                    min_std_before=_override("min_std_before", 20.0),
+                    exclude_open_hours=_override("exclude_open_hours", True, caster=bool),
+                    peak_distance_pts=_override("peak_distance_pts", 30.0),
+                    exit_distance_pts=_override("exit_distance_pts", 15.0),
+                )
+            elif builtin_key == "hammer_swing_exit":
+                stats = run_hammer_swing_exit_backtest(
+                    df_backtest, **common_kwargs,
+                    stop_loss_pts=_override("stop_loss_pts", 5.0),
+                    max_body_pts=_override("max_body_pts", 7.0),
+                    break_even_pts=_override("break_even_pts", 10.0),
+                    use_break_even=_override("use_break_even", True, caster=bool),
+                )
+            elif builtin_key == "sma20_mean_reversion":
+                stats = run_sma20_mean_reversion_backtest(
+                    df_backtest, **common_kwargs,
+                    min_distance_pts=_override("min_distance_pts", 20.0),
+                    stop_loss_pts=_override("stop_loss_pts", 15.0),
+                )
+            elif builtin_key == "down_streak_reversion":
+                stats = run_down_streak_reversion_backtest(
+                    df_backtest, **common_kwargs,
+                    streak_length=int(_override("streak_length", 3)),
+                    hold_bars=int(_override("hold_bars", 1)),
+                    use_prior_low_exit=_override("use_prior_low_exit", False, caster=bool),
+                    use_stop_loss=_override("use_stop_loss", False, caster=bool),
+                    stop_loss_pts=_override("stop_loss_pts", 5.0),
+                    use_volatility_filter=_override("use_volatility_filter", True, caster=bool),
+                    volatility_threshold=_override("volatility_threshold", 0.0004),
+                )
+            elif builtin_key == "overnight_val_reversion":
+                stats = run_overnight_val_reversion_backtest(
+                    df_backtest, **common_kwargs,
                     stop_loss_pts=_override("stop_loss_pts", 50.0),
-                    take_profit_pts=_override("take_profit_pts", 100.0),
+                    take_profit_pts=_override("take_profit_pts", 90.0),
                 )
             else:
                 stats = run_fast_sma_crossover_backtest(

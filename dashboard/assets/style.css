@@ -203,21 +203,24 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--
 .run-btn:disabled { opacity: 0.55; cursor: default; filter: none; }
 .run-error { color: var(--down); font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
 
-/* ---------- ספריית אסטרטגיות (Pine Editor), ליד הלשונית - כמו TradingView ----------
-   הצבע (top/left) נקבע ב-JS לפי מיקום לשונית "Pine Editor" בפועל (ראו
-   assets/strategy_library.js: positionArrow) - התלויות הפריסה כאן משרתות רק
-   את המראה (גודל/צבע/hover), לא את המיקום. */
-.strategy-lib-arrow {
-    position: absolute; z-index: 6; width: 20px; height: 20px;
-    display: flex; align-items: center; justify-content: center;
-    color: var(--muted); font-size: 11px; cursor: pointer; border-radius: 3px;
-    user-select: none;
+/* ---------- ספריית אסטרטגיות (Settings ← Strategy) - כמו TradingView ----------
+   מאז שה-Pine Editor עבר להיות תוכן רגיל בתוך תת-לשונית "Strategy" (לא עוד
+   לשונית עצמאית משלו), אין יותר צורך בטריק המיקום-ב-JS-מעל-כותרת-לשונית
+   שהיה כאן - זה עכשיו כפתור רגיל בזרימה, עם תפריט נפתח מתחתיו
+   (position:relative על strategy-lib-wrap + position:absolute על התפריט
+   ביחס אליו בלבד, בלי שום מדידת getBoundingClientRect). */
+.strategy-lib-wrap { position: relative; }
+.strategy-lib-btn {
+    display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--muted); font-size: 12.5px; font-family: var(--font); cursor: pointer;
 }
-.strategy-lib-arrow:hover { color: var(--text); background: var(--border); }
+.strategy-lib-btn:hover { color: var(--text); background: var(--border); }
+.strategy-lib-caret { font-size: 10px; }
 
 .strategy-lib-menu {
-    position: absolute; z-index: 30; min-width: 220px; max-width: 320px;
-    max-height: 320px; overflow-y: auto;
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+    min-width: 220px; max-width: 320px; max-height: 320px; overflow-y: auto;
     background: #1E222D; border: 1px solid var(--border); border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5); font-family: var(--font); padding: 6px 0;
 }
@@ -235,13 +238,31 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--
 .strategy-lib-action.disabled:hover { background: transparent; }
 
 .strategy-lib-toast {
-    position: absolute; z-index: 40;
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
     background: #1E222D; border: 1px solid var(--border); color: var(--text);
     font-size: 12px; padding: 6px 12px; border-radius: 4px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.4); pointer-events: none;
     opacity: 0; transition: opacity .2s ease;
 }
 .strategy-lib-toast.show { opacity: 1; }
+
+/* ---------- תת-לשוניות Settings (Strategy / Account) ----------
+   רמת-קינון שנייה, לכן קטנות/עדינות יותר מ-.ptab הראשי (ומ-.rtab) - כדי
+   שברור חזותית שאלה תת-לשוניות בתוך Settings, לא לשוניות פאנל נוספות. */
+.settings-subtabs-bar {
+    border-bottom: 1px solid var(--border); margin: -12px -14px 14px; padding: 0 14px;
+}
+.settings-subtabs, .settings-subtabs > div { display: flex; border: none !important; }
+.stab {
+    background: transparent !important; border: none !important;
+    color: var(--muted) !important; font-size: 12.5px !important; font-weight: 500 !important;
+    padding: 9px 4px !important; margin-right: 20px !important;
+}
+.stab:hover { color: var(--text) !important; }
+.stab-sel {
+    color: var(--text) !important; background: transparent !important;
+    border-bottom: 2px solid var(--blue) !important;
+}
 
 /* מודל "שם אסטרטגיה" (Save current/Save as new) - זהה במבנה ל-goto-modal-overlay. */
 .strategy-save-modal-overlay {

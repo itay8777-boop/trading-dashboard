@@ -33,7 +33,19 @@ CHART_OPTIONS = {
                "attributionLogo": False},
     "grid": {"vertLines": {"visible": False}, "horzLines": {"visible": False}},
     "crosshair": {"mode": 0},
-    "rightPriceScale": {"borderColor": BORDER, "scaleMargins": {"top": 0.08, "bottom": 0.28}},
+    # TradingView האמיתי משאיר לנרות את רוב גובה הפאנל (רק שוליים דקים למעלה/
+    # למטה) ודוחק את הוולום לרצועה צרה ממש בתחתית - לא "רבע מהגרף ריק". הערכים
+    # הקודמים (top:0.08, bottom:0.28) הזמינו כמעט שליש מהגובה כשוליים תחתונים,
+    # ובנוסף ל"עיגול" הטבעי של תוויות ציר-המחיר לערכים עגולים (תופעה מוכרת
+    # בכל ספריית גרפים, גם ב-TradingView עצמו) זה יצר פער ריק גדול בהרבה
+    # מהמוגדר בפועל - נרות "תקועים" למעלה עם המון שטח מת מתחתם. bottom:0.15
+    # תואם בדיוק ל-VOLUME_SCALE_MARGINS למטה (top:0.85) כך שהוולום יושב בדיוק
+    # ברצועה שהנרות שמרו לו, בלי פער ריק נוסף ובלי חפיפה.
+    # autoScale מוגדר כאן במפורש (הוא גם ברירת המחדל של LWC, ומאומת פעיל
+    # בפועל - ראו ensureChart ב-assets/chart.js) - לתעד את הכוונה בקוד עצמו
+    # ולא לסמוך על ברירת מחדל שקטה של הספרייה.
+    "rightPriceScale": {"borderColor": BORDER, "autoScale": True,
+                        "scaleMargins": {"top": 0.05, "bottom": 0.15}},
     # shiftVisibleRangeOnNewBar=True (ברירת המחדל של LWC): כל עוד המשתמש בקצה
     # החי, טיקים חדשים ממשיכים "לדחוף" את הטווח הנראה - בדיוק כמו TradingView.
     # זה כבה בעבר כי זה יצר שיטפון בקשות LOD אינסופי שדרס גלילה אחורה אמיתית -
@@ -58,7 +70,9 @@ VOLUME_OPTIONS = {
     "priceFormat": {"type": "volume"},
     "priceScaleId": "volume",
 }
-VOLUME_SCALE_MARGINS = {"top": 0.78, "bottom": 0.0}
+# צמוד ל-bottom של rightPriceScale למעלה (0.15) - הוולום תופס בדיוק את הרצועה
+# שהנרות משאירים לו פנויה, בלי לגזול משטח הנרות ובלי פער ריק בין השניים.
+VOLUME_SCALE_MARGINS = {"top": 0.85, "bottom": 0.0}
 
 
 def build_payload(df: pd.DataFrame, symbol: str, timeframe: str,

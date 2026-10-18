@@ -335,6 +335,12 @@
         resetLiveBtn = document.getElementById("reset-live-btn");
         candleSeries = addCandles(chart, payload.candleOptions);
         volumeSeries = addHistogram(chart, payload.volumeOptions);
+        // מפורש כאן, לא רק ב-payload.options["rightPriceScale"] (dashboard/chart.py) -
+        // כך גם קריאה ישירה ל-chart.js (בלי לעבור דרך ה-payload) לא תישאר עם
+        // autoScale כבוי בטעות. אין שום מקום בקובץ הזה שקובע טווח-מחיר קבוע
+        // (price range) לציר הימני - autoScale:true (גם ברירת המחדל של LWC)
+        // הוא המנגנון היחיד שקובע את הטווח הנראה, תמיד מחדש לפי הנרות הנראים.
+        chart.priceScale("right").applyOptions({autoScale: true});
         chart.priceScale("volume").applyOptions({scaleMargins: payload.volumeScaleMargins});
         smaSeries = addLine(chart, {
             color: SMA_COLOR, lineWidth: 2, priceLineVisible: false,
